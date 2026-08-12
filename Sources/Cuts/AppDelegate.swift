@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover = NSPopover()
     private var shelf: ShelfPanel!
@@ -9,6 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var downloads = DownloadManager(library: library)
     private let dragMonitor = DragMonitor()
     private var lastError: String?
+    private var popoverClosedAt = Date.distantPast
+
+    func popoverDidClose(_ notification: Notification) {
+        popoverClosedAt = Date()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -48,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.addSubview(overlay)
         }
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentViewController = NSHostingController(
             rootView: CollectionView(library: library, downloads: downloads))
     }
@@ -56,7 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
-        } else {
+        } else if Date().timeIntervalSince(popoverClosedAt) > 0.3 {
+            // If the transient popover just dismissed itself because of this
+            // very click, don't instantly reopen it — that reads as "can't close".
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
@@ -77,9 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Cuts", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
-        if let button = statusItem.button {
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
-        }
+        // Native status-item menu positioning: assign, click, unassign.
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        DispatchQueue.main.async { [weak self] in self?.statusItem.menu = nil }
     }
 
     @objc private func cutFromClipboard() {
@@ -98,6 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         downloads.enqueue(url)
         shelf.slideIn()
         shelf.refit()
+        // The card grows once oEmbed fills in the real title/art.
+        for delay in [0.6, 1.6] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.shelf.refit()
+            }
+        }
     }
 
     private func setupDownloadCallbacks() {

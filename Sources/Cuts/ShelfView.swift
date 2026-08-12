@@ -7,6 +7,9 @@ import UniformTypeIdentifiers
 struct ShelfView: View {
     @ObservedObject var downloads: DownloadManager
     @ObservedObject var dropState: DropState
+    var onClose: () -> Void
+
+    @State private var closeHover = false
 
     private var dropHover: Bool { dropState.hovering }
 
@@ -32,6 +35,19 @@ struct ShelfView: View {
                         .strokeBorder(Color.white.opacity(dropHover ? 0.35 : 0.12), lineWidth: 1)
                 )
         )
+        .overlay(alignment: .topLeading) {
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(closeHover ? 0.95 : 0.45))
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(Color.black.opacity(closeHover ? 0.6 : 0.35)))
+            }
+            .buttonStyle(.plain)
+            .onHover { closeHover = $0 }
+            .padding(8)
+            .help("Put the shelf away (download keeps running)")
+        }
         .environment(\.colorScheme, .dark)
     }
 

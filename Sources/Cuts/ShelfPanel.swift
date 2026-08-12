@@ -64,7 +64,8 @@ final class ShelfPanel: NSPanel {
         catcher.onURLDrop = onDrop
         catcher.onHover = { hovering in dropState.hovering = hovering }
 
-        let host = NSHostingView(rootView: ShelfView(downloads: downloads, dropState: dropState))
+        let host = NSHostingView(rootView: ShelfView(downloads: downloads, dropState: dropState,
+                                                     onClose: { [weak self] in self?.slideOut() }))
         host.frame = catcher.bounds
         host.autoresizingMask = [.width, .height]
         catcher.addSubview(host)
@@ -74,36 +75,43 @@ final class ShelfPanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
 
-    /// Slide in at the right edge of the screen the mouse is on.
+    /// The shelf's fixed home: right edge of the screen the mouse is on,
+    /// vertically centered. Same spot every time — no chasing the cursor.
+    private func homeFrame(for size: NSSize) -> NSRect {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? self.screen ?? NSScreen.main
+        let vf = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let margin: CGFloat = 18
+        var y = vf.midY - size.height / 2
+        y = min(max(y, vf.minY + margin), vf.maxY - size.height - margin)
+        return NSRect(x: vf.maxX - size.width - margin, y: y,
+                      width: size.width, height: size.height)
+    }
+
+    /// Slide in at the fixed home position.
     func slideIn() {
         guard !isVisible else { return }
         layoutIfNeeded()
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        guard let screen else { return }
-
         let size = hosting?.fittingSize ?? NSSize(width: 280, height: 320)
         setContentSize(size)
-
-        let vf = screen.visibleFrame
-        let margin: CGFloat = 18
-        let y = min(max(mouse.y - size.height / 2, vf.minY + margin), vf.maxY - size.height - margin)
-        let finalX = vf.maxX - size.width - margin
-        Log.d("shelf slideIn size=\(size) final=(\(Int(finalX)),\(Int(y))) screen=\(vf)")
-        setFrameOrigin(NSPoint(x: vf.maxX + 8, y: y)) // start just off-screen
+        let home = homeFrame(for: size)
+        Log.d("shelf slideIn size=\(size) home=(\(Int(home.origin.x)),\(Int(home.origin.y)))")
+        setFrameOrigin(NSPoint(x: home.maxX + size.width * 0.2, y: home.origin.y)) // start off-edge
         alphaValue = 0
         orderFrontRegardless()
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.28
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().setFrameOrigin(NSPoint(x: finalX, y: y))
+            animator().setFrameOrigin(home.origin)
             animator().alphaValue = 1
         }
     }
 
     func slideOut() {
         guard isVisible else { return }
+        Log.d("shelf slideOut")
         let f = frame
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.22
@@ -117,11 +125,12 @@ final class ShelfPanel: NSPanel {
     }
 
     /// Grow/shrink smoothly when content changes (drop target → player card).
+    /// Re-targets the fixed home so the card stays centered on the right edge.
     func refit() {
         guard isVisible, let size = hosting?.fittingSize else { return }
-        var f = frame
-        let dY = (f.height - size.height) / 2
-        f = NSRect(x: f.maxX - size.width, y: f.origin.y + dY, width: size.width, height: size.height)
+        let f = homeFrame(for: size)
+        guard f.size != frame.size || f.origin != frame.origin else { return }
+        Log.d("shelf refit \(frame.size) -> \(size)")
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.2
             animator().setFrame(f, display: true)

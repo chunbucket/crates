@@ -141,12 +141,14 @@ final class DownloadManager: ObservableObject {
     }
 
     private func finish(cut: ActiveCut, exitCode: Int32, lastLine: String) {
-        defer {
-            current = nil
-            finalPath = nil
-            if !queue.isEmpty { start(queue.removeFirst()) }
-        }
-        guard exitCode == 0, let path = finalPath else {
+        let path = finalPath
+        // Clear busy state BEFORE callbacks so isBusy is accurate inside them
+        // (the shelf's auto-dismiss checks it).
+        current = nil
+        finalPath = nil
+        defer { if !queue.isEmpty { start(queue.removeFirst()) } }
+
+        guard exitCode == 0, let path else {
             let msg: String
             if case .failed(let e) = cut.phase { msg = e } else { msg = lastLine }
             cut.phase = .failed(msg)
