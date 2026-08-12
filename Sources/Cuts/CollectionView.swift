@@ -1,9 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Menu bar popover: the collection as stacked sleeve rows.
+/// The collection: stacked sleeve rows grouped by date.
 /// Each row: mini vinyl (art label) · title / cut nº · duration · flac.
-/// Rows drag out as real files (Finder, Ableton) and reveal on double-click.
+/// Rows drag out as real files (Finder, Ableton), reveal on hover buttons,
+/// and show live stem-split progress inline.
 struct CollectionView: View {
     @ObservedObject var library: Library
     @ObservedObject var downloads: DownloadManager
@@ -16,20 +17,42 @@ struct CollectionView: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: 0, pinnedViews: []) {
                         if let active = downloads.current {
                             ActiveRow(cut: active)
                             Divider().opacity(0.25)
                         }
-                        ForEach(library.cuts) { cut in
-                            CutRow(cut: cut, library: library)
-                            Divider().opacity(0.25)
+                        ForEach(grouped, id: \.0) { label, cuts in
+                            DateHeader(label: label)
+                            ForEach(cuts) { cut in
+                                CutRow(cut: cut, library: library)
+                                Divider().opacity(0.25)
+                            }
                         }
                     }
                 }
             }
         }
         .frame(width: 340, height: 440)
+    }
+
+    /// Cuts grouped by calendar day, newest first (library is already sorted).
+    private var grouped: [(String, [Cut])] {
+        let cal = Calendar.current
+        let fmt = DateFormatter()
+        fmt.dateFormat = "MMM d"
+        var out: [(String, [Cut])] = []
+        for cut in library.cuts {
+            let label = cal.isDateInToday(cut.date) ? "TODAY"
+                : cal.isDateInYesterday(cut.date) ? "YESTERDAY"
+                : fmt.string(from: cut.date).uppercased()
+            if out.last?.0 == label {
+                out[out.count - 1].1.append(cut)
+            } else {
+                out.append((label, [cut]))
+            }
+        }
+        return out
     }
 
     private var header: some View {
@@ -54,13 +77,30 @@ struct CollectionView: View {
                 .foregroundStyle(.tertiary)
             Text("Nothing on the shelf yet")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Drag a YouTube link out of Safari —\nthe record player will catch it.")
+            Text("Drag a YouTube link onto the menu bar icon —\nthe record player will catch it.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+struct DateHeader: View {
+    let label: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .kerning(1.8)
+                .foregroundStyle(.tertiary)
+            Rectangle().fill(.tertiary.opacity(0.25)).frame(height: 1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
     }
 }
 
@@ -71,8 +111,17 @@ struct CutRow: View {
     @State private var hovering = false
 
     private var isSplitting: Bool { stems.inFlight.contains(cut.filePath) }
+    private var splitFailed: Bool { stems.failed.contains(cut.filePath) }
+    private var basename: String { (cut.filePath as NSString).lastPathComponent.replacingOccurrences(of: ".flac", with: "") }
+
+    /// Existing stems, recomputed when a split lands (stemsVersion invalidates).
+    private var stemFiles: [URL] {
+        _ = stems.stemsVersion
+        return StemSplitter.existingStems(forBasename: basename)
+    }
 
     var body: some View {
+        let stemsOnDisk = stemFiles
         HStack(spacing: 11) {
             MiniVinyl(artPath: cut.artPath)
                 .frame(width: 44, height: 44)
@@ -81,17 +130,27 @@ struct CutRow: View {
                 Text(cut.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                Text(isSplitting
-                     ? "\(cut.cutLabel) · splitting stems…"
-                     : "\(cut.cutLabel) · \(cut.durationLabel) · FLAC")
+                Text(subLine(stemCount: stemsOnDisk.count))
                     .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(splitFailed && !isSplitting ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+
             if isSplitting {
                 ProgressView().controlSize(.small)
             } else if hovering {
+                if let first = stemsOnDisk.first {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([first])
+                    } label: {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Reveal stems in Finder (\(stemsOnDisk.count)/5)")
+                }
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([cut.fileURL])
                 } label: {
@@ -100,7 +159,7 @@ struct CutRow: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("Reveal in Finder")
+                .help("Reveal FLAC in Finder")
             }
         }
         .padding(.horizontal, 14)
@@ -114,10 +173,15 @@ struct CutRow: View {
             return provider
         }
         .contextMenu {
-            Button("Split to Stems") {
+            Button(stemsOnDisk.isEmpty ? "Split to Stems" : "Re-split to Stems") {
                 StemSplitter.shared.split(cut)
             }
             .disabled(isSplitting)
+            if let first = stemsOnDisk.first {
+                Button("Reveal First Stem (\(first.deletingLastPathComponent().lastPathComponent))") {
+                    NSWorkspace.shared.activateFileViewerSelecting([first])
+                }
+            }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([cut.fileURL])
             }
@@ -130,6 +194,15 @@ struct CutRow: View {
                 library.remove(cut)
             }
         }
+    }
+
+    private func subLine(stemCount: Int) -> String {
+        if let live = stems.status[cut.filePath] {
+            return "\(cut.cutLabel) · \(live)"
+        }
+        var s = "\(cut.cutLabel) · \(cut.durationLabel) · FLAC"
+        if stemCount > 0 { s += " · \(stemCount)/5 stems" }
+        return s
     }
 }
 

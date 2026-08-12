@@ -9,6 +9,7 @@ final class CollectionPanel: NSPanel {
     private var hosting: NSHostingView<AnyView>?
     private var monitors: [Any] = []
     weak var statusWindow: NSWindow?
+    var onVisibilityChange: ((Bool) -> Void)?
 
     init(library: Library, downloads: DownloadManager) {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 340, height: 440),
@@ -58,6 +59,7 @@ final class CollectionPanel: NSPanel {
         setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         alphaValue = 0
         orderFrontRegardless()
+        onVisibilityChange?(true)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
             animator().alphaValue = 1
@@ -68,6 +70,7 @@ final class CollectionPanel: NSPanel {
     func closePanel() {
         removeMonitors()
         guard isVisible else { return }
+        onVisibilityChange?(false)
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.12
             animator().alphaValue = 0

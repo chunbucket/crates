@@ -29,11 +29,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Status item + popover
 
+    /// Hand-drawn vinyl glyph. Idle: template (adapts to menu bar).
+    /// Active: dark vinyl on an amber glow disc — the "playing" state.
+    private func vinylIcon(active: Bool) -> NSImage {
+        let size = NSSize(width: 20, height: 20)
+        let img = NSImage(size: size, flipped: false) { rect in
+            if active {
+                NSColor(calibratedRed: 1.0, green: 0.71, blue: 0.33, alpha: 1).setFill() // amber
+                NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
+            }
+            let ink = NSColor.black
+            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 3.5, dy: 3.5))
+            ring.lineWidth = 1.6
+            ink.setStroke()
+            ring.stroke()
+            let groove = NSBezierPath(ovalIn: rect.insetBy(dx: 6.2, dy: 6.2))
+            groove.lineWidth = 0.7
+            ink.withAlphaComponent(0.55).setStroke()
+            groove.stroke()
+            let dot = NSBezierPath(ovalIn: NSRect(x: rect.midX - 1.4, y: rect.midY - 1.4, width: 2.8, height: 2.8))
+            ink.setFill()
+            dot.fill()
+            return true
+        }
+        img.isTemplate = !active
+        return img
+    }
+
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "record.circle",
-                                   accessibilityDescription: "Cuts")
+            button.image = vinylIcon(active: false)
             // Transparent overlay makes the icon itself a drop target —
             // a stationary destination macOS tracks from before any drag
             // begins — and forwards clicks to our handlers.
@@ -49,6 +75,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         collection = CollectionPanel(library: library, downloads: downloads)
         collection.statusWindow = statusItem.button?.window
+        collection.onVisibilityChange = { [weak self] visible in
+            guard let self else { return }
+            self.statusItem.button?.image = self.vinylIcon(active: visible)
+        }
     }
 
     private func showMenu() {
