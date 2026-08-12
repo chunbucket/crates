@@ -43,6 +43,7 @@ final class ShelfPanel: NSPanel {
         let margin: CGFloat = 18
         let y = min(max(mouse.y - size.height / 2, vf.minY + margin), vf.maxY - size.height - margin)
         let finalX = vf.maxX - size.width - margin
+        Log.d("shelf slideIn size=\(size) final=(\(Int(finalX)),\(Int(y))) screen=\(vf)")
         setFrameOrigin(NSPoint(x: vf.maxX + 8, y: y)) // start just off-screen
         alphaValue = 0
         orderFrontRegardless()

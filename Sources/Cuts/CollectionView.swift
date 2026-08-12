@@ -67,7 +67,10 @@ struct CollectionView: View {
 struct CutRow: View {
     let cut: Cut
     let library: Library
+    @ObservedObject private var stems = StemSplitter.shared
     @State private var hovering = false
+
+    private var isSplitting: Bool { stems.inFlight.contains(cut.filePath) }
 
     var body: some View {
         HStack(spacing: 11) {
@@ -78,13 +81,17 @@ struct CutRow: View {
                 Text(cut.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                Text("\(cut.cutLabel) · \(cut.durationLabel) · FLAC")
+                Text(isSplitting
+                     ? "\(cut.cutLabel) · splitting stems…"
+                     : "\(cut.cutLabel) · \(cut.durationLabel) · FLAC")
                     .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            if hovering {
+            if isSplitting {
+                ProgressView().controlSize(.small)
+            } else if hovering {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([cut.fileURL])
                 } label: {
@@ -107,6 +114,10 @@ struct CutRow: View {
             return provider
         }
         .contextMenu {
+            Button("Split to Stems") {
+                StemSplitter.shared.split(cut)
+            }
+            .disabled(isSplitting)
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([cut.fileURL])
             }
