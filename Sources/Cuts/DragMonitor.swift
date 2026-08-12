@@ -63,16 +63,37 @@ final class DragMonitor {
         }
     }
 
+    /// Every pasteboard type a YouTube URL can hide in. Safari address-bar
+    /// drags carry NO public.url — the URL lives in Safari's plist flavors
+    /// (WebURLsWithTitlesPboardType / bookmarkDictionaryList), which are
+    /// written immediately rather than promised, so read those first.
+    static let dragTypes: [NSPasteboard.PasteboardType] = [
+        NSPasteboard.PasteboardType("WebURLsWithTitlesPboardType"),
+        NSPasteboard.PasteboardType("com.apple.Safari.bookmarkDictionaryList"),
+        NSPasteboard.PasteboardType("public.url"),
+        NSPasteboard.PasteboardType("public.utf8-plain-text"),
+        .string, .URL,
+    ]
+
     static func youtubeURL(on pb: NSPasteboard) -> String? {
         var candidates: [String] = []
+
+        if let plist = pb.propertyList(forType: NSPasteboard.PasteboardType("WebURLsWithTitlesPboardType")) as? [[String]],
+           let urls = plist.first {
+            candidates += urls
+        }
+        if let dicts = pb.propertyList(forType: NSPasteboard.PasteboardType("com.apple.Safari.bookmarkDictionaryList")) as? [[String: Any]] {
+            candidates += dicts.compactMap { $0["URLString"] as? String }
+        }
         for type in [NSPasteboard.PasteboardType("public.url"),
                      NSPasteboard.PasteboardType("public.utf8-plain-text"),
                      .string] {
             if let s = pb.string(forType: type) { candidates.append(s) }
         }
         if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL] {
-            candidates.append(contentsOf: urls.map(\.absoluteString))
+            candidates += urls.map(\.absoluteString)
         }
+
         for c in candidates {
             if let hit = YouTubeURL.extract(from: c) { return hit }
         }

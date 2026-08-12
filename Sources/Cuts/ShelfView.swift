@@ -2,12 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Content of the slide-in shelf panel: a drop target that becomes the
-/// record player while a cut is in progress.
+/// record player while a cut is in progress. Drops are accepted by the
+/// AppKit DropCatcherView underneath; this view only renders.
 struct ShelfView: View {
     @ObservedObject var downloads: DownloadManager
-    var onDrop: (String) -> Void
+    @ObservedObject var dropState: DropState
 
-    @State private var dropHover = false
+    private var dropHover: Bool { dropState.hovering }
 
     var body: some View {
         Group {
@@ -31,9 +32,6 @@ struct ShelfView: View {
                         .strokeBorder(Color.white.opacity(dropHover ? 0.35 : 0.12), lineWidth: 1)
                 )
         )
-        .onDrop(of: [.url, .utf8PlainText, .plainText], isTargeted: $dropHover) { providers in
-            handleDrop(providers)
-        }
         .environment(\.colorScheme, .dark)
     }
 
@@ -57,28 +55,6 @@ struct ShelfView: View {
         }
         .padding(.vertical, 18)
         .frame(maxWidth: .infinity)
-    }
-
-    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        for provider in providers {
-            if provider.canLoadObject(ofClass: NSURL.self) {
-                _ = provider.loadObject(ofClass: NSURL.self) { obj, _ in
-                    if let s = (obj as? NSURL)?.absoluteString, let hit = YouTubeURL.extract(from: s) {
-                        DispatchQueue.main.async { onDrop(hit) }
-                    }
-                }
-                return true
-            }
-            if provider.canLoadObject(ofClass: NSString.self) {
-                _ = provider.loadObject(ofClass: NSString.self) { obj, _ in
-                    if let s = obj as? String, let hit = YouTubeURL.extract(from: s) {
-                        DispatchQueue.main.async { onDrop(hit) }
-                    }
-                }
-                return true
-            }
-        }
-        return false
     }
 }
 
