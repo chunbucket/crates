@@ -40,11 +40,16 @@ final class StatusDropView: NSView {
         return true
     }
 
-    override func mouseDown(with event: NSEvent) {
-        onLeftClick?()
+    // Act on mouse-UP, one runloop later: showing a popover/menu while the
+    // status bar's click tracking is still active detaches it from the icon.
+    override func mouseDown(with event: NSEvent) {}
+    override func rightMouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        DispatchQueue.main.async { [weak self] in self?.onLeftClick?() }
     }
 
-    override func rightMouseDown(with event: NSEvent) {
-        onRightClick?()
+    override func rightMouseUp(with event: NSEvent) {
+        DispatchQueue.main.async { [weak self] in self?.onRightClick?() }
     }
 }

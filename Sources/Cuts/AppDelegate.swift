@@ -62,12 +62,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
-        } else if Date().timeIntervalSince(popoverClosedAt) > 0.3 {
-            // If the transient popover just dismissed itself because of this
-            // very click, don't instantly reopen it — that reads as "can't close".
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            return
         }
+        // If the transient popover just dismissed itself because of this
+        // very click, don't instantly reopen it — that reads as "can't close".
+        guard Date().timeIntervalSince(popoverClosedAt) > 0.3 else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        Log.d("popover show — button frame=\(button.window?.frame ?? .zero)")
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
     private func showMenu() {
