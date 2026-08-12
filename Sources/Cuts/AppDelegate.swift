@@ -1,19 +1,14 @@
 import AppKit
 import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var popover = NSPopover()
+    private var collection: CollectionPanel!
     private var shelf: ShelfPanel!
     private let library = Library()
     private lazy var downloads = DownloadManager(library: library)
     private let dragMonitor = DragMonitor()
     private var lastError: String?
-    private var popoverClosedAt = Date.distantPast
-
-    func popoverDidClose(_ notification: Notification) {
-        popoverClosedAt = Date()
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -48,28 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 Log.d("status item drop: \(url)")
                 self?.startCut(url)
             }
-            overlay.onLeftClick = { [weak self] in self?.togglePopover() }
+            overlay.onLeftClick = { [weak self] in self?.collection.toggle() }
             overlay.onRightClick = { [weak self] in self?.showMenu() }
             button.addSubview(overlay)
         }
-        popover.behavior = .transient
-        popover.delegate = self
-        popover.contentViewController = NSHostingController(
-            rootView: CollectionView(library: library, downloads: downloads))
-    }
-
-    private func togglePopover() {
-        guard let button = statusItem.button else { return }
-        if popover.isShown {
-            popover.performClose(nil)
-            return
-        }
-        // If the transient popover just dismissed itself because of this
-        // very click, don't instantly reopen it — that reads as "can't close".
-        guard Date().timeIntervalSince(popoverClosedAt) > 0.3 else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        Log.d("popover show — button frame=\(button.window?.frame ?? .zero)")
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        collection = CollectionPanel(library: library, downloads: downloads)
+        collection.statusWindow = statusItem.button?.window
     }
 
     private func showMenu() {
