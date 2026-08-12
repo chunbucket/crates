@@ -48,8 +48,10 @@ final class StemSplitter: ObservableObject {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        // Headed for now: headless Chromium gets stonewalled by Cloudflare
+        // without a warm clearance cookie. Revisit after a proven headed run.
         proc.arguments = ["-u", Self.scriptPath, cut.filePath]
-        proc.environment = ProcessInfo.processInfo.environment.merging(["HEADLESS": "1"]) { _, new in new }
+        proc.environment = ProcessInfo.processInfo.environment
 
         let logURL = Library.supportDir.appendingPathComponent("stemsplit.log")
         if !FileManager.default.fileExists(atPath: logURL.path) {
