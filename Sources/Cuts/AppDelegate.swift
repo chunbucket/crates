@@ -34,24 +34,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "record.circle",
                                    accessibilityDescription: "Cuts")
-            button.action = #selector(statusItemClicked(_:))
-            button.target = self
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // Transparent overlay makes the icon itself a drop target —
+            // a stationary destination macOS tracks from before any drag
+            // begins — and forwards clicks to our handlers.
+            let overlay = StatusDropView(frame: button.bounds)
+            overlay.autoresizingMask = [.width, .height]
+            overlay.onURLDrop = { [weak self] url in
+                Log.d("status item drop: \(url)")
+                self?.startCut(url)
+            }
+            overlay.onLeftClick = { [weak self] in self?.togglePopover() }
+            overlay.onRightClick = { [weak self] in self?.showMenu() }
+            button.addSubview(overlay)
         }
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(
             rootView: CollectionView(library: library, downloads: downloads))
     }
 
-    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
-        if NSApp.currentEvent?.type == .rightMouseUp {
-            showMenu()
-            return
-        }
+    private func togglePopover() {
+        guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
     }
@@ -71,9 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Cuts", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
-        statusItem.menu = menu
-        statusItem.button?.performClick(nil)
-        statusItem.menu = nil // so left-click goes back to the popover
+        if let button = statusItem.button {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
+        }
     }
 
     @objc private func cutFromClipboard() {

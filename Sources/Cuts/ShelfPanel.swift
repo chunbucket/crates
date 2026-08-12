@@ -21,10 +21,12 @@ final class DropCatcherView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Log.d("shelf draggingEntered")
         onHover?(true)
         return .copy
     }
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        Log.d("shelf draggingExited")
         onHover?(false)
     }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -48,7 +50,7 @@ final class ShelfPanel: NSPanel {
                    styleMask: [.nonactivatingPanel, .borderless],
                    backing: .buffered, defer: false)
         isFloatingPanel = true
-        level = .floating
+        level = .statusBar
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         backgroundColor = .clear
         isOpaque = false
