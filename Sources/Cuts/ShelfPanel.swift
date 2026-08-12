@@ -64,8 +64,10 @@ final class ShelfPanel: NSPanel {
         catcher.onURLDrop = onDrop
         catcher.onHover = { hovering in dropState.hovering = hovering }
 
-        let host = NSHostingView(rootView: ShelfView(downloads: downloads, dropState: dropState,
-                                                     onClose: { [weak self] in self?.slideOut() }))
+        let host = NSHostingView(rootView: ShelfView(
+            downloads: downloads, dropState: dropState,
+            onClose: { [weak self] in self?.slideOut() },
+            onSize: { [weak self] size in self?.contentDidResize(to: size) }))
         host.frame = catcher.bounds
         host.autoresizingMask = [.width, .height]
         catcher.addSubview(host)
@@ -89,11 +91,29 @@ final class ShelfPanel: NSPanel {
                       width: size.width, height: size.height)
     }
 
+    private var contentSize: NSSize?
+
+    /// SwiftUI reports its real laid-out size; animate the panel to match.
+    private func contentDidResize(to size: CGSize) {
+        let newSize = NSSize(width: size.width, height: size.height)
+        guard newSize.width > 1, newSize.height > 1 else { return }
+        let previous = contentSize
+        contentSize = newSize
+        guard isVisible, previous != newSize else { return }
+        let target = homeFrame(for: newSize)
+        guard target != frame else { return }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animator().setFrame(target, display: true)
+        }
+    }
+
     /// Slide in at the fixed home position.
     func slideIn() {
         guard !isVisible else { return }
         layoutIfNeeded()
-        let size = hosting?.fittingSize ?? NSSize(width: 280, height: 320)
+        let size = contentSize ?? hosting?.fittingSize ?? NSSize(width: 280, height: 320)
         setContentSize(size)
         let home = homeFrame(for: size)
         Log.d("shelf slideIn size=\(size) home=(\(Int(home.origin.x)),\(Int(home.origin.y)))")
@@ -124,16 +144,4 @@ final class ShelfPanel: NSPanel {
         })
     }
 
-    /// Grow/shrink smoothly when content changes (drop target → player card).
-    /// Re-targets the fixed home so the card stays centered on the right edge.
-    func refit() {
-        guard isVisible, let size = hosting?.fittingSize else { return }
-        let f = homeFrame(for: size)
-        guard f.size != frame.size || f.origin != frame.origin else { return }
-        Log.d("shelf refit \(frame.size) -> \(size)")
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.2
-            animator().setFrame(f, display: true)
-        }
-    }
 }

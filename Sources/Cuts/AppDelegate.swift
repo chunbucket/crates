@@ -117,13 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startCut(_ url: String) {
         downloads.enqueue(url)
         shelf.slideIn()
-        shelf.refit()
-        // The card grows once oEmbed fills in the real title/art.
-        for delay in [0.6, 1.6] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.shelf.refit()
-            }
-        }
+        // Panel tracks its SwiftUI content size automatically from here.
     }
 
     private func setupDownloadCallbacks() {
