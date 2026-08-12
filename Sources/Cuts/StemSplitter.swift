@@ -123,18 +123,18 @@ final class StemSplitter: ObservableObject {
 
     // MARK: - Runner
 
-    private func runSplit(fileToUpload: String, cut: Cut) {
+    private func runSplit(fileToUpload: String, cut: Cut, headless: Bool = true) {
         inFlight.insert(cut.filePath)
         failed.remove(cut.filePath)
-        status[cut.filePath] = "starting…"
-        Log.d("stem-split started: \(fileToUpload) (row: \(cut.filePath))")
+        status[cut.filePath] = headless ? "starting…" : "retrying with visible browser…"
+        Log.d("stem-split started: \(fileToUpload) headless=\(headless) (row: \(cut.filePath))")
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        // Headed for now: headless Chromium gets stonewalled by Cloudflare
-        // without a warm clearance cookie. Revisit after a proven headed run.
         proc.arguments = ["-u", Self.scriptPath, fileToUpload]
-        proc.environment = ProcessInfo.processInfo.environment
+        var env = ProcessInfo.processInfo.environment
+        if headless { env["HEADLESS"] = "1" }
+        proc.environment = env
 
         let logURL = Library.supportDir.appendingPathComponent("stemsplit.log")
         if !FileManager.default.fileExists(atPath: logURL.path) {
@@ -174,15 +174,24 @@ final class StemSplitter: ObservableObject {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
                         self.status.removeValue(forKey: cut.filePath)
                     }
-                } else {
-                    self.failed.insert(cut.filePath)
-                    let msg = self.status[cut.filePath].flatMap { $0.hasPrefix("failed") ? $0 : nil }
-                        ?? "failed — see stemsplit.log"
-                    self.status[cut.filePath] = msg
-                    self.lastError = msg
-                    Log.d("stem-split failed (exit \(p.terminationStatus))")
-                    NSSound.beep()
+                    return
                 }
+                let msg = self.status[cut.filePath] ?? "failed — see stemsplit.log"
+                // Hidden-browser run walled off before the upload field appeared
+                // (Cloudflare fingerprint check) → retry once with a visible window.
+                // Auth problems won't be fixed by a window, so those don't retry.
+                let looksLikeWall = msg.contains("set_input_files") || msg.contains("Timeout")
+                if headless && looksLikeWall && !msg.contains("not signed in") {
+                    Log.d("stem-split headless walled — retrying headed")
+                    self.runSplit(fileToUpload: fileToUpload, cut: cut, headless: false)
+                    return
+                }
+                self.failed.insert(cut.filePath)
+                let display = msg.hasPrefix("failed") ? msg : "failed — see stemsplit.log"
+                self.status[cut.filePath] = display
+                self.lastError = display
+                Log.d("stem-split failed (exit \(p.terminationStatus)): \(msg)")
+                NSSound.beep()
             }
         }
 
