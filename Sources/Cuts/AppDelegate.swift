@@ -131,7 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         downloads.onFailed = { [weak self] msg in
             guard let self else { return }
             self.lastError = msg
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            // Leave the failure on screen long enough to actually read.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
                 if !self.downloads.isBusy { self.shelf.slideOut() }
             }
         }

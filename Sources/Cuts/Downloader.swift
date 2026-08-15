@@ -75,6 +75,13 @@ final class DownloadManager: ObservableObject {
             "-o", Library.destinationDir.path + "/%(title)s.%(ext)s",
             cut.url,
         ]
+        // Apps launched from Finder/`open` get a bare PATH without
+        // /opt/homebrew/bin — yt-dlp then can't find ffmpeg for the
+        // FLAC extraction step. Make it explicit.
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:" + (env["PATH"] ?? "/usr/bin:/bin")
+        proc.environment = env
+
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
@@ -151,6 +158,7 @@ final class DownloadManager: ObservableObject {
         guard exitCode == 0, let path else {
             let msg: String
             if case .failed(let e) = cut.phase { msg = e } else { msg = lastLine }
+            Log.d("cut failed (exit \(exitCode)) url=\(cut.url): \(msg)")
             cut.phase = .failed(msg)
             onFailed?(msg)
             return
