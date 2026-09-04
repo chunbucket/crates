@@ -35,9 +35,17 @@ final class Library: ObservableObject {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: Self.indexURL),
-              let decoded = try? JSONDecoder().decode([Cut].self, from: data) else { return }
-        cuts = decoded.sorted { $0.cutNumber > $1.cutNumber }
+        guard let data = try? Data(contentsOf: Self.indexURL) else { return }
+        do {
+            cuts = try JSONDecoder().decode([Cut].self, from: data).sorted { $0.cutNumber > $1.cutNumber }
+        } catch {
+            // Never silently start over at CUT Nº 001 on top of a damaged
+            // index — park it where it can be recovered and log why.
+            let stamp = Int(Date().timeIntervalSince1970)
+            let backup = Self.supportDir.appendingPathComponent("library.corrupt-\(stamp).json")
+            try? FileManager.default.moveItem(at: Self.indexURL, to: backup)
+            Log.d("library.json unreadable (\(error)); moved to \(backup.lastPathComponent)")
+        }
     }
 
     private func save() {
