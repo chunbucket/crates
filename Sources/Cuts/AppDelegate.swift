@@ -8,7 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let library = Library()
     private lazy var downloads = DownloadManager(library: library)
     private let dragMonitor = DragMonitor()
-    private var lastError: String?
+    private var lastFailure: (url: String, message: String)?
+    /// The one timer that puts the shelf away; re-arming cancels the previous
+    /// one so a stale dwell can never dismiss a newer card.
+    private var pendingSlideOut: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -16,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shelf = ShelfPanel(downloads: downloads) { [weak self] url in
             self?.startCut(url)
         }
+        shelf.onHidden = { [weak self] in self?.downloads.dismissResult() }
 
         setupStatusItem()
         setupDownloadCallbacks()
@@ -25,6 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, andSelector: #selector(handleURLEvent(_:reply:)),
             forEventClass: AEEventClass(kInternetEventClass),
             andEventID: AEEventID(kAEGetURL))
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Don't leave an orphaned yt-dlp writing into the music folder.
+        downloads.cancelAll()
     }
 
     // MARK: - Status item + popover
@@ -87,11 +96,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               action: #selector(cutFromClipboard), keyEquivalent: "")
         clip.target = self
         menu.addItem(clip)
-        if let err = lastError {
+        if let failure = lastFailure {
             menu.addItem(.separator())
-            let e = NSMenuItem(title: "Last error: \(String(err.prefix(70)))", action: nil, keyEquivalent: "")
+            let e = NSMenuItem(title: "Last error: \(String(failure.message.prefix(70)))", action: nil, keyEquivalent: "")
             e.isEnabled = false
             menu.addItem(e)
+            let retry = NSMenuItem(title: "Retry Last Failed Cut",
+                                   action: #selector(retryLastFailed), keyEquivalent: "")
+            retry.target = self
+            menu.addItem(retry)
         }
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Cuts", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -103,38 +116,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func cutFromClipboard() {
-        guard let s = NSPasteboard.general.string(forType: .string),
-              let url = YouTubeURL.extract(from: s) else {
+        // Same reader as drops: handles plain text, public.url and Safari's
+        // plist flavors, and scheme-less / embedded URLs.
+        guard let url = DragMonitor.youtubeURL(on: NSPasteboard.general) else {
             NSSound.beep()
             return
         }
-        shelf.slideIn()
         startCut(url)
+    }
+
+    @objc private func retryLastFailed() {
+        if let failure = lastFailure { startCut(failure.url) }
     }
 
     // MARK: - Downloads
 
     private func startCut(_ url: String) {
-        downloads.enqueue(url)
-        shelf.slideIn()
-        // Panel tracks its SwiftUI content size automatically from here.
+        pendingSlideOut?.cancel()
+        switch downloads.enqueue(url) {
+        case .started, .queued:
+            shelf.slideIn()
+        case .duplicate(let existing):
+            downloads.dismissResult()
+            shelf.slideIn(notice: "already on the shelf · \(existing.cutLabel)")
+            scheduleSlideOut(after: 2.2)
+        case .rejected:
+            NSSound.beep()
+        }
+    }
+
+    private func scheduleSlideOut(after delay: TimeInterval) {
+        pendingSlideOut?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.slideOutIfIdle() }
+        pendingSlideOut = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    /// Put the shelf away unless something still needs it on screen.
+    private func slideOutIfIdle() {
+        if !downloads.isBusy && !dragMonitor.isDragging { shelf.slideOut() }
     }
 
     private func setupDownloadCallbacks() {
         downloads.onFinished = { [weak self] _ in
-            guard let self else { return }
-            // Let "filed ✓" read for a moment, then put the record away.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                if !self.downloads.isBusy { self.shelf.slideOut() }
-            }
+            self?.scheduleSlideOut(after: DownloadManager.dwell(after: .done))
         }
-        downloads.onFailed = { [weak self] msg in
-            guard let self else { return }
-            self.lastError = msg
-            // Leave the failure on screen long enough to actually read.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
-                if !self.downloads.isBusy { self.shelf.slideOut() }
-            }
+        downloads.onFailed = { [weak self] url, message in
+            self?.lastFailure = (url, message)
+            self?.scheduleSlideOut(after: DownloadManager.dwell(after: .failed(message)))
         }
     }
 
@@ -142,12 +171,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupDragMonitor() {
         dragMonitor.onYouTubeDragStarted = { [weak self] in
-            self?.shelf.slideIn()
+            guard let self else { return }
+            // A stale "filed ✓" card shouldn't cover the drop target.
+            self.pendingSlideOut?.cancel()
+            self.downloads.dismissResult()
+            self.shelf.slideIn()
         }
         dragMonitor.onDragEnded = { [weak self] in
-            guard let self else { return }
-            // Keep the shelf up if a cut is running (or just landed).
-            if !self.downloads.isBusy { self.shelf.slideOut() }
+            self?.slideOutIfIdle()
         }
         dragMonitor.start()
     }

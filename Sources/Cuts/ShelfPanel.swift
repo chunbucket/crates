@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// Shared hover state between the AppKit drop catcher and the SwiftUI card.
-final class DropState: ObservableObject {
+/// Shelf UI state shared between AppKit (drop catcher, panel) and SwiftUI.
+final class ShelfState: ObservableObject {
     @Published var hovering = false
+    /// Copy shown on the idle card in place of "drop to cut" (e.g. a duplicate notice).
+    @Published var notice: String?
 }
 
 /// AppKit dragging destination wrapping the SwiftUI shelf content.
@@ -44,6 +46,9 @@ final class DropCatcherView: NSView {
 /// Non-activating floating panel that slides in from the right screen edge.
 final class ShelfPanel: NSPanel {
     private var hosting: NSHostingView<ShelfView>?
+    private let state = ShelfState()
+    /// Called once the panel has fully slid away and is ordered out.
+    var onHidden: (() -> Void)?
 
     init(downloads: DownloadManager, onDrop: @escaping (String) -> Void) {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 280, height: 320),
@@ -59,13 +64,12 @@ final class ShelfPanel: NSPanel {
         hidesOnDeactivate = false
         animationBehavior = .none
 
-        let dropState = DropState()
         let catcher = DropCatcherView(frame: NSRect(x: 0, y: 0, width: 280, height: 320))
         catcher.onURLDrop = onDrop
-        catcher.onHover = { hovering in dropState.hovering = hovering }
+        catcher.onHover = { [state] hovering in state.hovering = hovering }
 
         let host = NSHostingView(rootView: ShelfView(
-            downloads: downloads, dropState: dropState,
+            downloads: downloads, state: state,
             onClose: { [weak self] in self?.slideOut() },
             onSize: { [weak self] size in self?.contentDidResize(to: size) }))
         host.frame = catcher.bounds
@@ -92,6 +96,10 @@ final class ShelfPanel: NSPanel {
     }
 
     private var contentSize: NSSize?
+    /// Non-nil while sliding out. A slide-in clears it, so the slide-out's
+    /// completion (which checks identity) can't order the panel out from
+    /// under the slide-in that interrupted it.
+    private var slideOutToken: NSObject?
 
     /// SwiftUI reports its real laid-out size; animate the panel to match.
     private func contentDidResize(to size: CGSize) {
@@ -99,7 +107,7 @@ final class ShelfPanel: NSPanel {
         guard newSize.width > 1, newSize.height > 1 else { return }
         let previous = contentSize
         contentSize = newSize
-        guard isVisible, previous != newSize else { return }
+        guard isVisible, slideOutToken == nil, previous != newSize else { return }
         let target = homeFrame(for: newSize)
         guard target != frame else { return }
         NSAnimationContext.runAnimationGroup { ctx in
@@ -109,39 +117,47 @@ final class ShelfPanel: NSPanel {
         }
     }
 
-    /// Slide in at the fixed home position.
-    func slideIn() {
-        guard !isVisible else { return }
+    /// Slide in at the fixed home position, showing `notice` on the idle
+    /// card if given. Interrupts a slide-out in progress.
+    func slideIn(notice: String? = nil) {
+        state.notice = notice
+        if isVisible && slideOutToken == nil { return }
+        slideOutToken = nil
         layoutIfNeeded()
         let size = contentSize ?? hosting?.fittingSize ?? NSSize(width: 280, height: 320)
-        setContentSize(size)
         let home = homeFrame(for: size)
         Log.d("shelf slideIn size=\(size) home=(\(Int(home.origin.x)),\(Int(home.origin.y)))")
-        setFrameOrigin(NSPoint(x: home.maxX + size.width * 0.2, y: home.origin.y)) // start off-edge
+        // Start just off the screen edge; NSWindow's animator only animates
+        // `frame` (not setFrameOrigin), so both legs go through setFrame.
+        setFrame(home.offsetBy(dx: size.width * 1.2, dy: 0), display: false)
         alphaValue = 0
         orderFrontRegardless()
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.28
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().setFrameOrigin(home.origin)
+            animator().setFrame(home, display: true)
             animator().alphaValue = 1
         }
     }
 
     func slideOut() {
-        guard isVisible else { return }
+        guard isVisible, slideOutToken == nil else { return }
         Log.d("shelf slideOut")
-        let f = frame
+        let token = NSObject()
+        slideOutToken = token
+        let off = frame.offsetBy(dx: frame.width * 0.4, dy: 0)
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.22
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            animator().setFrameOrigin(NSPoint(x: f.origin.x + f.width * 0.4, y: f.origin.y))
+            animator().setFrame(off, display: true)
             animator().alphaValue = 0
         }, completionHandler: { [weak self] in
-            self?.orderOut(nil)
-            self?.alphaValue = 1
+            guard let self, self.slideOutToken === token else { return } // a slideIn took over
+            self.slideOutToken = nil
+            self.orderOut(nil)
+            self.alphaValue = 1
+            self.onHidden?()
         })
     }
-
 }

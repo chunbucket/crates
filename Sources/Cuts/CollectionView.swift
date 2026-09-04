@@ -18,8 +18,14 @@ struct CollectionView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0, pinnedViews: []) {
-                        if let active = downloads.current {
+                        // A finished cut is already in the list below; keep
+                        // in-flight and failed cards up top.
+                        if let active = downloads.current, active.phase != .done {
                             ActiveRow(cut: active)
+                            Divider().opacity(0.25)
+                        }
+                        ForEach(downloads.queued, id: \.self) { url in
+                            QueuedRow(url: url)
                             Divider().opacity(0.25)
                         }
                         ForEach(grouped, id: \.0) { label, cuts in
@@ -112,12 +118,11 @@ struct CutRow: View {
 
     private var isSplitting: Bool { stems.inFlight.contains(cut.filePath) }
     private var splitFailed: Bool { stems.failed.contains(cut.filePath) }
-    private var basename: String { (cut.filePath as NSString).lastPathComponent.replacingOccurrences(of: ".flac", with: "") }
 
     /// Existing stems, recomputed when a split lands (stemsVersion invalidates).
     private var stemFiles: [URL] {
         _ = stems.stemsVersion
-        return StemSplitter.existingStems(forBasename: basename)
+        return StemSplitter.existingStems(forBasename: cut.basename)
     }
 
     var body: some View {
@@ -222,11 +227,20 @@ struct ActiveRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            if case .cutting(let p) = cut.phase {
+            switch cut.phase {
+            case .cutting(let p):
                 Text("\(Int(p * 100))%")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(.secondary)
-            } else {
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+            case .done:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            default:
                 ProgressView().controlSize(.small)
             }
         }
@@ -242,6 +256,31 @@ struct ActiveRow: View {
         case .done: return "\(cut.cutLabel) · filed ✓"
         case .failed(let e): return "failed — \(e)"
         }
+    }
+}
+
+/// A link waiting its turn behind the current cut.
+struct QueuedRow: View {
+    let url: String
+
+    var body: some View {
+        HStack(spacing: 11) {
+            MiniVinyl(artPath: nil)
+                .frame(width: 44, height: 44)
+                .opacity(0.5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(YouTubeURL.display(url))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text("queued · up next")
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 }
 

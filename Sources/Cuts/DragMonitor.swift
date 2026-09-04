@@ -17,6 +17,9 @@ final class DragMonitor {
     private var trackingDrag = false
     private var matched = false
 
+    /// A YouTube drag is in progress right now (matched, button still down).
+    var isDragging: Bool { trackingDrag && matched }
+
     init() {
         lastCC = NSPasteboard(name: .drag).changeCount
     }

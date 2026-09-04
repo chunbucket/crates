@@ -11,18 +11,18 @@ struct ShelfSizeKey: PreferenceKey {
 
 struct ShelfView: View {
     @ObservedObject var downloads: DownloadManager
-    @ObservedObject var dropState: DropState
+    @ObservedObject var state: ShelfState
     var onClose: () -> Void
     var onSize: (CGSize) -> Void
 
     @State private var closeHover = false
 
-    private var dropHover: Bool { dropState.hovering }
+    private var dropHover: Bool { state.hovering }
 
     var body: some View {
         Group {
             if let cut = downloads.current {
-                PlayerCard(cut: cut)
+                PlayerCard(cut: cut, queuedCount: downloads.queued.count)
             } else {
                 dropTarget
             }
@@ -79,9 +79,10 @@ struct ShelfView: View {
             .scaleEffect(dropHover ? 1.06 : 1.0)
             .animation(.spring(duration: 0.25), value: dropHover)
 
-            Text("drop to cut")
+            Text(state.notice ?? "drop to cut")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.65))
+                .multilineTextAlignment(.center)
         }
         .padding(.vertical, 18)
         .frame(maxWidth: .infinity)
@@ -91,6 +92,7 @@ struct ShelfView: View {
 /// The record player while cutting: vinyl + corner mark + title + status.
 struct PlayerCard: View {
     @ObservedObject var cut: ActiveCut
+    var queuedCount: Int = 0
 
     var body: some View {
         VStack(spacing: 10) {
@@ -119,7 +121,14 @@ struct PlayerCard: View {
                     .multilineTextAlignment(.center)
                 Text(statusLine)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(cut.phase.isFailed ? .orange.opacity(0.9) : .white.opacity(0.5))
+                    .lineLimit(3)
+                    .multilineTextAlignment(.center)
+                if queuedCount > 0 {
+                    Text("+\(queuedCount) queued")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
             }
         }
     }
@@ -133,12 +142,7 @@ struct PlayerCard: View {
         }
     }
 
-    private var isSpinning: Bool {
-        switch cut.phase {
-        case .failed, .done: return false
-        default: return true
-        }
-    }
+    private var isSpinning: Bool { !cut.phase.isTerminal }
 
     private var statusLine: String {
         switch cut.phase {
@@ -146,7 +150,7 @@ struct PlayerCard: View {
         case .cutting(let p): return String(format: "cutting… %d%%", Int(p * 100))
         case .pressing: return "pressing to flac…"
         case .done: return "filed ✓"
-        case .failed: return "cut failed — see menu"
+        case .failed(let why): return "cut failed — \(why)"
         }
     }
 }

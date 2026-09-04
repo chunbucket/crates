@@ -13,6 +13,8 @@ struct Cut: Codable, Identifiable, Equatable {
 
     var fileURL: URL { URL(fileURLWithPath: filePath) }
     var artURL: URL? { artPath.map { URL(fileURLWithPath: $0) } }
+    /// File name without extension — what stems are filed under.
+    var basename: String { fileURL.deletingPathExtension().lastPathComponent }
 
     var durationLabel: String {
         guard let d = duration, d > 0 else { return "—:—" }
@@ -36,6 +38,19 @@ enum CutPhase: Equatable {
     case pressing             // ffmpeg convert / embed
     case done
     case failed(String)
+
+    /// Finished one way or the other — nothing left in flight.
+    var isTerminal: Bool {
+        switch self {
+        case .done, .failed: return true
+        default: return false
+        }
+    }
+
+    var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
+    }
 }
 
 /// A download in flight, displayed on the shelf.
@@ -49,11 +64,16 @@ final class ActiveCut: ObservableObject, Identifiable {
     @Published var artPath: String?
     @Published var phase: CutPhase = .fetchingArt
 
+    static let placeholderTitle = "Fetching…"
+
     init(url: String, cutNumber: Int) {
         self.url = url
         self.cutNumber = cutNumber
-        self.title = "Fetching…"
+        self.title = Self.placeholderTitle
     }
+
+    /// oEmbed came back with a real title.
+    var hasTitle: Bool { title != Self.placeholderTitle }
 
     var cutLabel: String { String(format: "CUT Nº %03d", cutNumber) }
     var dateLabel: String {
