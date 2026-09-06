@@ -9,6 +9,8 @@ struct CollectionView: View {
     @ObservedObject var library: Library
     @ObservedObject var downloads: DownloadManager
     var onRetry: (Cut) -> Void
+    /// For a 403: refresh yt-dlp first, then re-cut.
+    var onUpdateAndRetry: (Cut) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,7 +34,7 @@ struct CollectionView: View {
                         ForEach(grouped, id: \.0) { label, cuts in
                             DateHeader(label: label)
                             ForEach(cuts) { cut in
-                                CutRow(cut: cut, library: library, onRetry: onRetry)
+                                CutRow(cut: cut, library: library, onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry)
                                 Divider().opacity(0.25)
                             }
                         }
@@ -117,15 +119,21 @@ struct CutRow: View {
     let cut: Cut
     let library: Library
     var onRetry: (Cut) -> Void
+    var onUpdateAndRetry: (Cut) -> Void
     @State private var hovering = false
+    /// Checked once per appearance, not per render.
+    @State private var fileMissing = false
 
     private func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    /// Failed, or filed but the FLAC has gone: either way the fix is a re-cut.
+    private var needsRecut: Bool { cut.isFailed || fileMissing }
+    private var looksLike403: Bool { cut.error?.contains("403") == true }
 
     var body: some View {
         let row = HStack(spacing: 11) {
             MiniVinyl(artPath: cut.artPath)
                 .frame(width: 44, height: 44)
-                .opacity(cut.isFailed ? 0.55 : 1)
+                .opacity(needsRecut ? 0.55 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(cut.title)
@@ -133,20 +141,20 @@ struct CutRow: View {
                     .lineLimit(1)
                 Text(subLine)
                     .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(cut.isFailed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(needsRecut ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
 
             if hovering {
-                if cut.isFailed {
+                if needsRecut {
                     Button { onRetry(cut) } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.orange)
-                    .help("Retry this cut")
+                    .help(cut.isFailed ? "Retry this cut" : "Cut it again (file is missing)")
                 } else if let url = cut.fileURL {
                     Button { reveal(url) } label: {
                         Image(systemName: "magnifyingglass")
@@ -163,9 +171,11 @@ struct CutRow: View {
         .contentShape(Rectangle())
         .background(hovering ? Color.primary.opacity(0.06) : .clear)
         .onHover { hovering = $0 }
+        .onAppear { fileMissing = !cut.isFailed && !cut.fileExists }
         .contextMenu {
-            if cut.isFailed {
-                Button("Retry") { onRetry(cut) }
+            if needsRecut {
+                Button(cut.isFailed ? "Retry" : "Cut Again") { onRetry(cut) }
+                if looksLike403 { Button("Update yt-dlp, then Retry") { onUpdateAndRetry(cut) } }
             } else if let url = cut.fileURL {
                 Button("Reveal in Finder") { reveal(url) }
             }
@@ -174,13 +184,13 @@ struct CutRow: View {
                 NSPasteboard.general.setString(cut.url, forType: .string)
             }
             Divider()
-            Button(cut.isFailed ? "Remove from Shelf" : "Remove from Shelf (keeps file)") {
+            Button(needsRecut ? "Remove from Shelf" : "Remove from Shelf (keeps file)") {
                 library.remove(cut)
             }
         }
 
-        // Only a filed cut drags out as a file (Finder, Ableton).
-        if let url = cut.fileURL, !cut.isFailed {
+        // Only a cut whose file is really there drags out (Finder, Ableton).
+        if let url = cut.fileURL, !needsRecut {
             row.onDrag {
                 let provider = NSItemProvider(contentsOf: url) ?? NSItemProvider()
                 provider.suggestedName = url.lastPathComponent
@@ -193,6 +203,7 @@ struct CutRow: View {
 
     private var subLine: String {
         if cut.isFailed { return "\(cut.cutLabel) · failed — \(cut.error ?? "unknown error")" }
+        if fileMissing { return "\(cut.cutLabel) · file missing — moved or deleted?" }
         return "\(cut.cutLabel) · \(cut.durationLabel) · FLAC"
     }
 }

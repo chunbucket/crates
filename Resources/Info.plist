@@ -12,6 +12,8 @@
     <string>1</string>
     <key>CFBundleShortVersionString</key>
     <string>0.2.0</string>
+    <key>CFBundleIconFile</key>
+    <string>Cuts</string>
     <key>CFBundleExecutable</key>
     <string>Cuts</string>
     <key>CFBundlePackageType</key>

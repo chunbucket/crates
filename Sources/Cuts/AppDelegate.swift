@@ -31,6 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, andSelector: #selector(handleURLEvent(_:reply:)),
             forEventClass: AEEventClass(kInternetEventClass),
             andEventID: AEEventID(kAEGetURL))
+
+        // First launch with nothing filed: show the (empty) collection once so
+        // a new user sees where things go and how to drop a link.
+        if !UserDefaults.standard.bool(forKey: "hasLaunched") {
+            UserDefaults.standard.set(true, forKey: "hasLaunched")
+            if library.cuts.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.collection.open() }
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -84,9 +93,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.onRightClick = { [weak self] in self?.showMenu() }
             button.addSubview(overlay)
         }
-        collection = CollectionPanel(library: library, downloads: downloads) { [weak self] cut in
-            self?.startCut(cut.url) // a retry is just the same link again; enqueue lands it in its row
-        }
+        collection = CollectionPanel(
+            library: library, downloads: downloads,
+            onRetry: { [weak self] cut in
+                self?.startCut(cut.url) // a retry is just the same link again; enqueue lands it in its row
+            },
+            onUpdateAndRetry: { [weak self] cut in
+                Tools.shared.updateYtdlp { result in
+                    if case .failure(let error) = result {
+                        Notifier.shared.post(title: "yt-dlp update failed", body: error.localizedDescription)
+                    }
+                    self?.startCut(cut.url)
+                }
+            })
         collection.statusWindow = statusItem.button?.window
         collection.onVisibilityChange = { [weak self] visible in
             guard let self else { return }

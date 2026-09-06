@@ -62,8 +62,8 @@ final class DownloadManager: ObservableObject {
             Log.d("duplicate: \(url) already filed as \(existing.cutLabel)")
             return .duplicate(existing)
         }
-        // Dropping (or retrying) a link that failed before lands in its row.
-        return schedule(url: url, reuse: existing?.isFailed == true ? existing : nil)
+        // A row that failed, or whose FLAC has gone missing, is re-cut in place.
+        return schedule(url: url, reuse: existing)
     }
 
     private func schedule(url: String, reuse: Cut?) -> EnqueueResult {

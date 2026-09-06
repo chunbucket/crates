@@ -11,7 +11,8 @@ final class CollectionPanel: NSPanel {
     weak var statusWindow: NSWindow?
     var onVisibilityChange: ((Bool) -> Void)?
 
-    init(library: Library, downloads: DownloadManager, onRetry: @escaping (Cut) -> Void) {
+    init(library: Library, downloads: DownloadManager,
+         onRetry: @escaping (Cut) -> Void, onUpdateAndRetry: @escaping (Cut) -> Void) {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 340, height: 440),
                    styleMask: [.nonactivatingPanel, .borderless],
                    backing: .buffered, defer: false)
@@ -25,7 +26,7 @@ final class CollectionPanel: NSPanel {
         animationBehavior = .none
 
         let root = AnyView(
-            CollectionView(library: library, downloads: downloads, onRetry: onRetry)
+            CollectionView(library: library, downloads: downloads, onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry)
                 .background(.ultraThickMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(

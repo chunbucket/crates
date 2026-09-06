@@ -97,7 +97,7 @@ build() {
     cp Resources/Info.plist "$APP/Contents/Info.plist"
     plutil -replace CFBundleVersion -string "$(git rev-list --count HEAD)" "$APP/Contents/Info.plist"
     plutil -replace CutsBundledYtdlp -string "$YTDLP_VERSION" "$APP/Contents/Info.plist"
-    cp THIRD-PARTY-LICENSES.md "$APP/Contents/Resources/"
+    cp THIRD-PARTY-LICENSES.md Resources/Cuts.icns "$APP/Contents/Resources/"
 
     cp -R vendor/yt-dlp_macos "$YTDLP"
     cp vendor/ffmpeg vendor/deno "$BIN/"
