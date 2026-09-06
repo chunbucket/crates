@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Applied to the bundled yt-dlp only (PyInstaller onefile: Python JIT +
+         dylibs extracted to $TMPDIR at run time). Used when SIGN_IDENTITY is a
+         real Developer ID with the hardened runtime; ignored for ad-hoc builds. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
