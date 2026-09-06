@@ -3,11 +3,12 @@ import UniformTypeIdentifiers
 
 /// The collection: stacked sleeve rows grouped by date.
 /// Each row: mini vinyl (art label) · title / cut nº · duration · flac.
-/// Rows drag out as real files (Finder, Ableton), reveal on hover buttons,
-/// and show live stem-split progress inline.
+/// Rows drag out as real files (Finder, Ableton) and reveal on hover; a
+/// failed row shows its reason and a Retry.
 struct CollectionView: View {
     @ObservedObject var library: Library
     @ObservedObject var downloads: DownloadManager
+    var onRetry: (Cut) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,7 +21,7 @@ struct CollectionView: View {
                     LazyVStack(spacing: 0, pinnedViews: []) {
                         // In flight up top; once it lands (filed or failed)
                         // the library row below takes over.
-                        if let active = downloads.current, !active.phase.isTerminal {
+                        if let active = downloads.inFlight {
                             ActiveRow(cut: active)
                             Divider().opacity(0.25)
                         }
@@ -31,7 +32,7 @@ struct CollectionView: View {
                         ForEach(grouped, id: \.0) { label, cuts in
                             DateHeader(label: label)
                             ForEach(cuts) { cut in
-                                CutRow(cut: cut, library: library, downloads: downloads)
+                                CutRow(cut: cut, library: library, onRetry: onRetry)
                                 Divider().opacity(0.25)
                             }
                         }
@@ -48,7 +49,7 @@ struct CollectionView: View {
         let cal = Calendar.current
         let fmt = DateFormatter()
         fmt.dateFormat = "MMM d"
-        let inFlight = downloads.current.flatMap { $0.phase.isTerminal ? nil : $0.id }
+        let inFlight = downloads.inFlight?.id
         var out: [(String, [Cut])] = []
         for cut in library.cuts where cut.id != inFlight {
             let label = cal.isDateInToday(cut.date) ? "TODAY"
@@ -115,8 +116,10 @@ struct DateHeader: View {
 struct CutRow: View {
     let cut: Cut
     let library: Library
-    let downloads: DownloadManager
+    var onRetry: (Cut) -> Void
     @State private var hovering = false
+
+    private func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
 
     var body: some View {
         let row = HStack(spacing: 11) {
@@ -137,7 +140,7 @@ struct CutRow: View {
 
             if hovering {
                 if cut.isFailed {
-                    Button { downloads.retry(cut) } label: {
+                    Button { onRetry(cut) } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 11, weight: .semibold))
                     }
@@ -145,7 +148,7 @@ struct CutRow: View {
                     .foregroundStyle(.orange)
                     .help("Retry this cut")
                 } else if let url = cut.fileURL {
-                    Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
+                    Button { reveal(url) } label: {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 11, weight: .semibold))
                     }
@@ -162,9 +165,9 @@ struct CutRow: View {
         .onHover { hovering = $0 }
         .contextMenu {
             if cut.isFailed {
-                Button("Retry") { downloads.retry(cut) }
+                Button("Retry") { onRetry(cut) }
             } else if let url = cut.fileURL {
-                Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                Button("Reveal in Finder") { reveal(url) }
             }
             Button("Copy YouTube Link") {
                 NSPasteboard.general.clearContents()

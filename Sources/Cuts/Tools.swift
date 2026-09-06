@@ -43,32 +43,31 @@ final class Tools: ObservableObject {
 
     private init() {
         let fm = FileManager.default
-        let bundledYtdlp = Self.bundledYtdlpDir.appendingPathComponent("yt-dlp_macos")
-        let bundledVersion = Bundle.main.infoDictionary?["CutsBundledYtdlp"] as? String ?? ""
-        let bundled = fm.isExecutableFile(atPath: bundledYtdlp.path)
-        isBundled = bundled
-
+        isBundled = fm.isExecutableFile(atPath: Self.bundledYtdlpDir.appendingPathComponent("yt-dlp_macos").path)
         let bundledFfmpeg = Self.bundleBin.appendingPathComponent("ffmpeg")
         ffmpegDir = fm.isExecutableFile(atPath: bundledFfmpeg.path) ? Self.bundleBin : Self.homebrew
         let bundledDeno = Self.bundleBin.appendingPathComponent("deno")
         deno = fm.isExecutableFile(atPath: bundledDeno.path) ? bundledDeno : nil
-
-        let updated = Self.updatedYtdlpDir.appendingPathComponent("yt-dlp_macos")
-        let updatedVersion = (try? String(contentsOf: Self.updatedVersionFile, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if bundled, fm.isExecutableFile(atPath: updated.path), updatedVersion > bundledVersion {
-            ytdlp = updated
-            ytdlpVersion = updatedVersion
-        } else if bundled {
-            ytdlp = bundledYtdlp
-            ytdlpVersion = bundledVersion
-            // A newer app shipped a newer yt-dlp than the one we downloaded: drop the stale copy.
-            if fm.fileExists(atPath: Self.updatedYtdlpDir.path) { try? fm.removeItem(at: Self.updatesDir) }
-        } else {
-            ytdlp = Self.homebrew.appendingPathComponent("yt-dlp")
-            ytdlpVersion = "homebrew"
-        }
+        (ytdlp, ytdlpVersion) = Self.resolveYtdlp(bundled: isBundled)
         Log.d("tools: yt-dlp=\(ytdlp.path) (\(ytdlpVersion)) ffmpeg=\(ffmpegDir.path) deno=\(deno?.path ?? "PATH")")
+    }
+
+    /// The one rule for which yt-dlp runs: a downloaded update while it is
+    /// newer than the bundled copy, else the bundled copy (dropping a stale
+    /// update), else Homebrew. Used at launch and again after an update so
+    /// "what runs now" and "what runs next launch" can't disagree.
+    private static func resolveYtdlp(bundled: Bool) -> (URL, String) {
+        guard bundled else { return (homebrew.appendingPathComponent("yt-dlp"), "homebrew") }
+        let fm = FileManager.default
+        let bundledVersion = Bundle.main.infoDictionary?["CutsBundledYtdlp"] as? String ?? ""
+        let updated = updatedYtdlpDir.appendingPathComponent("yt-dlp_macos")
+        let updatedVersion = (try? String(contentsOf: updatedVersionFile, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if fm.isExecutableFile(atPath: updated.path), updatedVersion > bundledVersion {
+            return (updated, updatedVersion)
+        }
+        if fm.fileExists(atPath: updatedYtdlpDir.path) { try? fm.removeItem(at: updatesDir) }
+        return (bundledYtdlpDir.appendingPathComponent("yt-dlp_macos"), bundledVersion)
     }
 
     /// Environment for a yt-dlp process. Only the Homebrew fallback needs
@@ -125,11 +124,8 @@ final class Tools: ObservableObject {
                 return version
             }
             DispatchQueue.main.async {
-                if case .success(let version) = result {
-                    self.ytdlp = Self.updatedYtdlpDir.appendingPathComponent("yt-dlp_macos")
-                    self.ytdlpVersion = version
-                }
-                Log.d("yt-dlp update: \(result)")
+                if case .success = result { (self.ytdlp, self.ytdlpVersion) = Self.resolveYtdlp(bundled: true) }
+                Log.d("yt-dlp update: \(result) → running \(self.ytdlpVersion)")
                 completion(result)
             }
         }.resume()

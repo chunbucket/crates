@@ -17,9 +17,9 @@ enum EnqueueResult {
 
 /// A link waiting its turn. `reuse` is the failed row a retry replaces.
 struct QueuedCut: Identifiable {
-    let id = UUID()
     let url: String
     let reuse: Cut?
+    var id: String { url }   // the queue never holds the same URL twice
 }
 
 final class DownloadManager: ObservableObject {
@@ -31,25 +31,25 @@ final class DownloadManager: ObservableObject {
     private let tools = Tools.shared
     private var proc: Process?
     var onStarted: ((ActiveCut) -> Void)?
-    var onFinished: ((Cut) -> Void)?
-    var onFailed: ((Cut) -> Void)?
+    /// The cut landed, filed or failed; the row is already in the library.
+    var onSettled: ((Cut) -> Void)?
 
     private static let tempDir = Library.supportDir.appendingPathComponent("tmp", isDirectory: true)
 
     /// How long a finished / failed card stays up before the shelf moves on
     /// (next queued cut, or slide-out). Failures get long enough to read.
-    static func dwell(after phase: CutPhase) -> TimeInterval { phase.isFailed ? 6.0 : 1.4 }
+    static func dwell(failed: Bool) -> TimeInterval { failed ? 6.0 : 1.4 }
 
     init(library: Library) {
         self.library = library
         Self.wipeTemp() // leftovers from a crash / force-quit
     }
 
-    /// A cut is in flight or waiting. A finished or failed card may still sit
-    /// on `current` for display — that doesn't count as busy.
-    var isBusy: Bool {
-        !queued.isEmpty || (current.map { !$0.phase.isTerminal } ?? false)
-    }
+    /// The cut yt-dlp is working on right now. A finished or failed card may
+    /// still sit on `current` for display; that isn't in flight.
+    var inFlight: ActiveCut? { current.flatMap { $0.phase.isTerminal ? nil : $0 } }
+
+    var isBusy: Bool { !queued.isEmpty || inFlight != nil }
 
     @discardableResult
     func enqueue(_ rawURL: String) -> EnqueueResult {
@@ -62,14 +62,8 @@ final class DownloadManager: ObservableObject {
             Log.d("duplicate: \(url) already filed as \(existing.cutLabel)")
             return .duplicate(existing)
         }
-        // Dropping a link that failed before retries it in place.
+        // Dropping (or retrying) a link that failed before lands in its row.
         return schedule(url: url, reuse: existing?.isFailed == true ? existing : nil)
-    }
-
-    /// Retry a failed row: same CUT Nº, same slot.
-    @discardableResult
-    func retry(_ cut: Cut) -> EnqueueResult {
-        schedule(url: cut.url, reuse: cut)
     }
 
     private func schedule(url: String, reuse: Cut?) -> EnqueueResult {
@@ -97,9 +91,7 @@ final class DownloadManager: ObservableObject {
     }
 
     private func start(_ url: String, reuse: Cut?) {
-        let cut = ActiveCut(url: url,
-                            cutNumber: reuse?.cutNumber ?? library.nextCutNumber,
-                            id: reuse?.id ?? UUID())
+        let cut = ActiveCut(url: url, cutNumber: reuse?.cutNumber ?? library.nextCutNumber, id: reuse?.id ?? UUID())
         current = cut
         fetchOEmbed(for: cut)
         runYtdlp(for: cut)
@@ -147,8 +139,9 @@ final class DownloadManager: ObservableObject {
             return
         }
         let fm = FileManager.default
+        let destination = Settings.shared.destinationDir
         try? fm.createDirectory(at: Self.tempDir, withIntermediateDirectories: true)
-        try? fm.createDirectory(at: Library.destinationDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
 
         let proc = Process()
         proc.executableURL = tools.ytdlp
@@ -164,7 +157,7 @@ final class DownloadManager: ObservableObject {
         args += [
             // Duration first: a title may legally contain "|", the path is the remainder.
             "--print", "after_move:@@done|%(duration)s|%(filepath)s",
-            "-P", "home:" + Library.destinationDir.path,
+            "-P", "home:" + destination.path,
             "-P", "temp:" + Self.tempDir.path,
             "-o", "%(title)s.%(ext)s",
             cut.url,
@@ -215,8 +208,8 @@ final class DownloadManager: ObservableObject {
         }
     }
 
-    private var finalPath: String?
-    private var finalDuration: Double?
+    /// From the `@@done|` line; consumed once by `finish`.
+    private var finalResult: (path: String, duration: Double?)?
 
     private func handle(line: String, for cut: ActiveCut) {
         let apply: () -> Void
@@ -230,10 +223,7 @@ final class DownloadManager: ObservableObject {
             apply = { cut.phase = .pressing }
         } else if line.hasPrefix("@@done|") {
             let parts = line.dropFirst("@@done|".count).split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
-            if parts.count == 2 {
-                finalDuration = Double(parts[0]) // "NA" → nil
-                finalPath = String(parts[1])
-            }
+            if parts.count == 2 { finalResult = (String(parts[1]), Double(parts[0])) } // duration "NA" → nil
             apply = {}
         } else if line.hasPrefix("ERROR") {
             apply = { cut.phase = .failed(line) }
@@ -244,29 +234,20 @@ final class DownloadManager: ObservableObject {
     }
 
     private func finish(cut: ActiveCut, exitCode: Int32, lastLine: String) {
-        let path = finalPath
-        let duration = finalDuration
-        finalPath = nil
-        finalDuration = nil
+        let result = finalResult
+        finalResult = nil
         proc = nil
 
         // The card stays on `current` in its terminal state so "filed ✓" /
-        // the failure reason actually render.
-        if exitCode == 0, let path, FileManager.default.fileExists(atPath: path) {
+        // the failure reason actually render. The row keeps the card's id and
+        // number, which is what lets a retry replace it in place.
+        var record = Cut(id: cut.id, cutNumber: cut.cutNumber, url: cut.url, title: cut.title,
+                         uploader: cut.uploader, artPath: cut.artPath, date: cut.date)
+        if exitCode == 0, let result, FileManager.default.fileExists(atPath: result.path) {
             cut.phase = .done
-            let record = Cut(
-                id: cut.id,
-                cutNumber: cut.cutNumber,
-                url: cut.url,
-                title: cut.hasTitle ? cut.title : URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
-                uploader: cut.uploader,
-                filePath: path,
-                artPath: cut.artPath,
-                duration: duration,
-                date: cut.date
-            )
-            library.upsert(record)
-            onFinished?(record)
+            if !cut.hasTitle { record.title = URL(fileURLWithPath: result.path).deletingPathExtension().lastPathComponent }
+            record.filePath = result.path
+            record.duration = result.duration
         } else {
             let raw: String
             if case .failed(let e) = cut.phase { raw = e } else { raw = lastLine }
@@ -276,26 +257,16 @@ final class DownloadManager: ObservableObject {
             // No oEmbed title either (private/removed video): show the link instead.
             if !cut.hasTitle { cut.title = YouTubeURL.display(cut.url) }
             cut.phase = .failed(msg)
-            let record = Cut(
-                id: cut.id,
-                cutNumber: cut.cutNumber,
-                url: cut.url,
-                title: cut.title,
-                uploader: cut.uploader,
-                status: CutStatus.failed,
-                error: msg,
-                filePath: nil,
-                artPath: cut.artPath,
-                duration: nil,
-                date: cut.date
-            )
-            library.upsert(record)
-            onFailed?(record)
+            record.title = cut.title
+            record.status = CutStatus.failed
+            record.error = msg
         }
+        library.upsert(record)
+        onSettled?(record)
 
         // The next queued cut replaces the result card after its dwell.
         if !queued.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.dwell(after: cut.phase)) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.dwell(failed: record.isFailed)) { [weak self] in
                 self?.startNextIfAny()
             }
         }

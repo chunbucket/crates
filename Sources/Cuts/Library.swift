@@ -11,9 +11,6 @@ final class Library: ObservableObject {
     static let artDir = supportDir.appendingPathComponent("art", isDirectory: true)
     private static let indexURL = supportDir.appendingPathComponent("library.json")
 
-    /// Where finished FLACs go — a setting since v0.2.
-    static var destinationDir: URL { Settings.shared.destinationDir }
-
     init() {
         try? FileManager.default.createDirectory(at: Self.artDir, withIntermediateDirectories: true)
         load()
@@ -22,12 +19,14 @@ final class Library: ObservableObject {
     /// Failed rows keep their number, so numbering stays monotonic.
     var nextCutNumber: Int { (cuts.map(\.cutNumber).max() ?? 0) + 1 }
 
+    private static let newestFirst: (Cut, Cut) -> Bool = { $0.cutNumber > $1.cutNumber }
+
     /// Insert, or replace the row with the same id (a retried cut lands in
     /// the same slot with the same CUT Nº).
     func upsert(_ cut: Cut) {
         cuts.removeAll { $0.id == cut.id }
         cuts.append(cut)
-        cuts.sort { $0.cutNumber > $1.cutNumber }
+        cuts.sort(by: Self.newestFirst)
         save()
     }
 
@@ -39,7 +38,7 @@ final class Library: ObservableObject {
     private func load() {
         guard let data = try? Data(contentsOf: Self.indexURL) else { return }
         do {
-            cuts = try JSONDecoder().decode([Cut].self, from: data).sorted { $0.cutNumber > $1.cutNumber }
+            cuts = try JSONDecoder().decode([Cut].self, from: data).sorted(by: Self.newestFirst)
         } catch {
             // Never silently start over at CUT Nº 001 on top of a damaged
             // index — park it where it can be recovered and log why.

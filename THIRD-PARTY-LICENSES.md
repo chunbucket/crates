@@ -3,7 +3,7 @@
 Cuts runs these as separate processes; none are linked into the app.
 
 ## yt-dlp
-`Contents/MacOS/yt-dlp_macos/` — official standalone macOS build.
+`Contents/Resources/yt-dlp_macos/` — official standalone macOS build.
 License: The Unlicense (public domain). Source: https://github.com/yt-dlp/yt-dlp
 Bundled with it: the yt-dlp-ejs challenge scripts (same project) and a
 PyInstaller-packaged CPython runtime (PSF License).

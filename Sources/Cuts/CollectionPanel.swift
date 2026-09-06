@@ -11,7 +11,7 @@ final class CollectionPanel: NSPanel {
     weak var statusWindow: NSWindow?
     var onVisibilityChange: ((Bool) -> Void)?
 
-    init(library: Library, downloads: DownloadManager) {
+    init(library: Library, downloads: DownloadManager, onRetry: @escaping (Cut) -> Void) {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 340, height: 440),
                    styleMask: [.nonactivatingPanel, .borderless],
                    backing: .buffered, defer: false)
@@ -25,7 +25,7 @@ final class CollectionPanel: NSPanel {
         animationBehavior = .none
 
         let root = AnyView(
-            CollectionView(library: library, downloads: downloads)
+            CollectionView(library: library, downloads: downloads, onRetry: onRetry)
                 .background(.ultraThickMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
@@ -60,13 +60,10 @@ final class CollectionPanel: NSPanel {
         alphaValue = 0
         orderFrontRegardless()
         onVisibilityChange?(true)
-        NSAnimationContext.runAnimationGroup({ ctx in
+        NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
             animator().alphaValue = 1
-        }, completionHandler: { [weak self] in
-            guard let self else { return }
-            Log.d("collection shown alpha=\(self.alphaValue) visible=\(self.isVisible) frame=\(self.frame)")
-        })
+        }
         installMonitors()
     }
 

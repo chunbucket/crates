@@ -20,7 +20,8 @@ final class Settings: ObservableObject {
     @Published var destinationDir: URL {
         didSet { UserDefaults.standard.set(destinationDir.path, forKey: Self.destinationKey) }
     }
-    @Published private(set) var launchAtLogin: Bool
+    /// Read from launchd on demand (an XPC round-trip) — only the Settings form asks.
+    var launchAtLogin: Bool { SMAppService.mainApp.status == .enabled }
 
     private init() {
         if let stored = UserDefaults.standard.string(forKey: Self.destinationKey) {
@@ -30,16 +31,15 @@ final class Settings: ObservableObject {
         } else {
             destinationDir = Self.defaultDestination
         }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     func setLaunchAtLogin(_ on: Bool) {
+        objectWillChange.send()
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
             Log.d("launch at login \(on ? "register" : "unregister") failed: \(error)")
         }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     static var appVersion: String {
@@ -59,7 +59,7 @@ struct SettingsView: View {
         Form {
             LabeledContent("Cuts go to") {
                 HStack(spacing: 8) {
-                    Text(abbreviated(settings.destinationDir.path))
+                    Text((settings.destinationDir.path as NSString).abbreviatingWithTildeInPath)
                         .truncationMode(.middle)
                         .lineLimit(1)
                         .foregroundStyle(.secondary)
@@ -87,10 +87,6 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func abbreviated(_ path: String) -> String {
-        (path as NSString).abbreviatingWithTildeInPath
     }
 
     private func chooseDestination() {

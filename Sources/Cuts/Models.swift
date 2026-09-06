@@ -1,7 +1,7 @@
 import Foundation
 
-/// Row status on disk. A string union (not an enum) so the index format
-/// stays trivially readable by older builds and other front ends.
+/// Row status on disk. Plain strings (house style: no enum types) so the
+/// index stays a simple document for other front ends to read.
 enum CutStatus {
     static let filed = "filed"
     static let failed = "failed"
@@ -119,7 +119,7 @@ final class ActiveCut: ObservableObject, Identifiable {
 
     /// `id`/`cutNumber` are reused when retrying a failed row so the row is
     /// replaced in place rather than duplicated.
-    init(url: String, cutNumber: Int, id: UUID = UUID()) {
+    init(url: String, cutNumber: Int, id: UUID) {
         self.id = id
         self.url = url
         self.cutNumber = cutNumber

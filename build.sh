@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source vendor.env
 
-VERSION=0.2.0
+VERSION=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
 APP=build/Cuts.app
 BIN="$APP/Contents/MacOS"
 # yt-dlp's onedir tree mixes dylibs with zips/.py files. codesign treats
@@ -48,15 +48,18 @@ fetch() {
 
 # ---------- build ----------
 
-is_macho() { file -b "$1" | grep -q "Mach-O"; }
-
-# v1 is Apple-silicon only: drop x86_64 slices from universal binaries.
-thin_arm64() {
+# One pass over the tree: every Mach-O path into MACHOS, universal ones
+# thinned to arm64 on the way (v1 is Apple-silicon only).
+MACHOS=()
+collect_machos() {
+    local f kind
     while IFS= read -r -d '' f; do
-        if file -b "$f" | grep -q "Mach-O universal"; then
-            lipo -thin arm64 "$f" -output "$f.thin" && mv "$f.thin" "$f"
-        fi
-    done < <(find "$1" -type f -print0)
+        kind=$(file -b "$f")
+        case "$kind" in
+            *"Mach-O universal"*) lipo -thin arm64 "$f" -output "$f.thin" && mv "$f.thin" "$f"; MACHOS+=("$f") ;;
+            *Mach-O*) MACHOS+=("$f") ;;
+        esac
+    done < <(find "$1" -type f -not -path "*.framework/*" -print0)
 }
 
 # The release zip stores the framework's symlinks as duplicate files, which
@@ -72,12 +75,13 @@ fix_framework() {
     ln -s Versions/Current/Resources "$fw/Resources"
 }
 
-# Hardened runtime + timestamp only mean something with a real identity.
+# ENTITLEMENTS=<plist> sign target…  — hardened runtime, timestamp and
+# entitlements only mean something with a real identity.
 sign() {
     if [ "$SIGN_IDENTITY" = "-" ]; then
         codesign --force -s - "$@"
     else
-        codesign --force --options runtime --timestamp -s "$SIGN_IDENTITY" "$@"
+        codesign --force --options runtime --timestamp ${ENTITLEMENTS:+--entitlements "$ENTITLEMENTS"} -s "$SIGN_IDENTITY" "$@"
     fi
 }
 
@@ -91,34 +95,25 @@ build() {
     mkdir -p "$BIN" "$APP/Contents/Resources"
     cp .build/release/Cuts "$BIN/Cuts"
     cp Resources/Info.plist "$APP/Contents/Info.plist"
-    plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
     plutil -replace CFBundleVersion -string "$(git rev-list --count HEAD)" "$APP/Contents/Info.plist"
     plutil -replace CutsBundledYtdlp -string "$YTDLP_VERSION" "$APP/Contents/Info.plist"
     cp THIRD-PARTY-LICENSES.md "$APP/Contents/Resources/"
 
     cp -R vendor/yt-dlp_macos "$YTDLP"
     cp vendor/ffmpeg vendor/deno "$BIN/"
-    thin_arm64 "$APP/Contents"
     fix_framework "$YTDLP/_internal/Python.framework"
     xattr -cr "$APP"
 
-    # Sign inside-out: yt-dlp's dylibs, its Python.framework (as a bundle), its
-    # executable (with entitlements when hardened), ffmpeg, deno (JIT entitlements
-    # when hardened), then the app. No --deep.
-    while IFS= read -r -d '' f; do
-        is_macho "$f" && sign "$f"
-    done < <(find "$YTDLP/_internal" -type f -not -path "*.framework/*" -print0)
+    # Sign inside-out: yt-dlp's dylibs in one batch, its Python.framework (as
+    # a bundle), its executable, ffmpeg, deno, then the app. No --deep.
+    collect_machos "$YTDLP/_internal"
+    sign "${MACHOS[@]}"
     sign "$YTDLP/_internal/Python.framework"
-    local ents=()
-    [ "$SIGN_IDENTITY" = "-" ] || ents=(--entitlements Resources/entitlements.plist)
-    sign ${ents[@]+"${ents[@]}"} "$YTDLP/yt-dlp_macos"
+    ENTITLEMENTS=Resources/entitlements.plist      sign "$YTDLP/yt-dlp_macos"
     sign "$BIN/ffmpeg"
-    local deno_ents=()
-    [ "$SIGN_IDENTITY" = "-" ] || deno_ents=(--entitlements Resources/entitlements-deno.plist)
-    sign ${deno_ents[@]+"${deno_ents[@]}"} "$BIN/deno"
+    ENTITLEMENTS=Resources/entitlements-deno.plist sign "$BIN/deno"
     sign "$APP"
-    codesign --verify --strict "$APP"
-    codesign --verify --strict "$YTDLP/yt-dlp_macos" "$YTDLP/_internal/Python.framework" "$BIN/ffmpeg" "$BIN/deno"
+    codesign --verify --strict "$APP" "$YTDLP/yt-dlp_macos" "$YTDLP/_internal/Python.framework" "$BIN/ffmpeg" "$BIN/deno"
 
     echo "Built $APP · $(du -sh "$APP" | cut -f1) · signed as '$SIGN_IDENTITY' · yt-dlp $YTDLP_VERSION"
 }

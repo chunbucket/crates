@@ -84,7 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.onRightClick = { [weak self] in self?.showMenu() }
             button.addSubview(overlay)
         }
-        collection = CollectionPanel(library: library, downloads: downloads)
+        collection = CollectionPanel(library: library, downloads: downloads) { [weak self] cut in
+            self?.startCut(cut.url) // a retry is just the same link again; enqueue lands it in its row
+        }
         collection.statusWindow = statusItem.button?.window
         collection.onVisibilityChange = { [weak self] visible in
             guard let self else { return }
@@ -94,20 +96,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showMenu() {
         let menu = NSMenu()
-        let clip = NSMenuItem(title: "Cut from Clipboard Link",
-                              action: #selector(cutFromClipboard), keyEquivalent: "")
-        clip.target = self
-        menu.addItem(clip)
+        menu.addItem(withTitle: "Cut from Clipboard Link", action: #selector(cutFromClipboard), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
-        settings.target = self
-        menu.addItem(settings)
-        let update = NSMenuItem(title: "Update yt-dlp…", action: #selector(updateYtdlp), keyEquivalent: "")
-        update.target = self
-        menu.addItem(update)
+        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "Update yt-dlp…", action: #selector(updateYtdlp), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Cuts", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
+        menu.addItem(withTitle: "Quit Cuts", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         // Native status-item menu positioning: assign, click, unassign.
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
@@ -141,11 +135,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Downloads
 
+    /// Every cut enters here (drop, clipboard, URL scheme, row retry).
     private func startCut(_ url: String) {
-        pendingSlideOut?.cancel()
         switch downloads.enqueue(url) {
-        case .started, .queued:
-            shelf.slideIn()
+        case .started:
+            break // onStarted raised the shelf
+        case .queued:
+            raiseShelf()
         case .duplicate(let existing):
             downloads.dismissResult()
             shelf.slideIn(notice: "already on the shelf · \(existing.cutLabel)")
@@ -153,6 +149,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .rejected:
             NSSound.beep()
         }
+    }
+
+    /// Bring the record player up and stop any pending put-away.
+    private func raiseShelf() {
+        pendingSlideOut?.cancel()
+        shelf.slideIn()
     }
 
     private func scheduleSlideOut(after delay: TimeInterval) {
@@ -169,22 +171,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupDownloadCallbacks() {
         // Every start (drop, retry, queue advance) brings the record player up.
-        downloads.onStarted = { [weak self] _ in
-            self?.pendingSlideOut?.cancel()
-            self?.shelf.slideIn()
-        }
-        downloads.onFinished = { [weak self] cut in
+        downloads.onStarted = { [weak self] _ in self?.raiseShelf() }
+        downloads.onSettled = { [weak self] cut in
             guard let self else { return }
-            self.scheduleSlideOut(after: DownloadManager.dwell(after: .done))
+            self.scheduleSlideOut(after: DownloadManager.dwell(failed: cut.isFailed))
             // The card says it when the shelf is up; otherwise the system does.
-            if !self.shelf.isVisible { Notifier.shared.post(title: "Filed · \(cut.title)", body: cut.cutLabel) }
-        }
-        downloads.onFailed = { [weak self] cut in
-            guard let self else { return }
-            self.scheduleSlideOut(after: DownloadManager.dwell(after: .failed("")))
-            if !self.shelf.isVisible {
-                Notifier.shared.post(title: "Cut failed · \(cut.title)", body: cut.error ?? "unknown error")
-            }
+            guard !self.shelf.isVisible else { return }
+            Notifier.shared.post(title: cut.isFailed ? "Cut failed · \(cut.title)" : "Filed · \(cut.title)",
+                                 body: cut.isFailed ? (cut.error ?? "unknown error") : cut.cutLabel)
         }
     }
 
@@ -194,9 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dragMonitor.onYouTubeDragStarted = { [weak self] in
             guard let self else { return }
             // A stale "filed ✓" card shouldn't cover the drop target.
-            self.pendingSlideOut?.cancel()
             self.downloads.dismissResult()
-            self.shelf.slideIn()
+            self.raiseShelf()
         }
         dragMonitor.onDragEnded = { [weak self] in
             self?.slideOutIfIdle()
