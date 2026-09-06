@@ -8,13 +8,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let library = Library()
     private lazy var downloads = DownloadManager(library: library)
     private let dragMonitor = DragMonitor()
-    private var lastFailure: (url: String, message: String)?
     /// The one timer that puts the shelf away; re-arming cancels the previous
     /// one so a stale dwell can never dismiss a newer card.
     private var pendingSlideOut: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        Tools.shared.prewarm()
+        Notifier.shared.start()
+        Notifier.shared.onActivate = { [weak self] in self?.collection.open() }
 
         shelf = ShelfPanel(downloads: downloads) { [weak self] url in
             self?.startCut(url)
@@ -96,16 +98,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               action: #selector(cutFromClipboard), keyEquivalent: "")
         clip.target = self
         menu.addItem(clip)
-        if let failure = lastFailure {
-            menu.addItem(.separator())
-            let e = NSMenuItem(title: "Last error: \(String(failure.message.prefix(70)))", action: nil, keyEquivalent: "")
-            e.isEnabled = false
-            menu.addItem(e)
-            let retry = NSMenuItem(title: "Retry Last Failed Cut",
-                                   action: #selector(retryLastFailed), keyEquivalent: "")
-            retry.target = self
-            menu.addItem(retry)
-        }
+        menu.addItem(.separator())
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+        let update = NSMenuItem(title: "Update yt-dlp…", action: #selector(updateYtdlp), keyEquivalent: "")
+        update.target = self
+        menu.addItem(update)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Cuts", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
@@ -125,8 +124,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startCut(url)
     }
 
-    @objc private func retryLastFailed() {
-        if let failure = lastFailure { startCut(failure.url) }
+    @objc private func openSettings() {
+        SettingsWindow.shared.show()
+    }
+
+    @objc private func updateYtdlp() {
+        Tools.shared.updateYtdlp { result in
+            switch result {
+            case .success(let version):
+                Notifier.shared.post(title: "yt-dlp updated", body: version)
+            case .failure(let error):
+                Notifier.shared.post(title: "yt-dlp update failed", body: error.localizedDescription)
+            }
+        }
     }
 
     // MARK: - Downloads
@@ -158,12 +168,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupDownloadCallbacks() {
-        downloads.onFinished = { [weak self] _ in
-            self?.scheduleSlideOut(after: DownloadManager.dwell(after: .done))
+        // Every start (drop, retry, queue advance) brings the record player up.
+        downloads.onStarted = { [weak self] _ in
+            self?.pendingSlideOut?.cancel()
+            self?.shelf.slideIn()
         }
-        downloads.onFailed = { [weak self] url, message in
-            self?.lastFailure = (url, message)
-            self?.scheduleSlideOut(after: DownloadManager.dwell(after: .failed(message)))
+        downloads.onFinished = { [weak self] cut in
+            guard let self else { return }
+            self.scheduleSlideOut(after: DownloadManager.dwell(after: .done))
+            // The card says it when the shelf is up; otherwise the system does.
+            if !self.shelf.isVisible { Notifier.shared.post(title: "Filed · \(cut.title)", body: cut.cutLabel) }
+        }
+        downloads.onFailed = { [weak self] cut in
+            guard let self else { return }
+            self.scheduleSlideOut(after: DownloadManager.dwell(after: .failed("")))
+            if !self.shelf.isVisible {
+                Notifier.shared.post(title: "Cut failed · \(cut.title)", body: cut.error ?? "unknown error")
+            }
         }
     }
 
@@ -183,14 +204,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dragMonitor.start()
     }
 
-    // MARK: - cuts:// URL scheme (testing + automation)
+    // MARK: - cuts:// URL scheme (automation + tests)
+    //   cuts://cut?url=<encoded YouTube URL>   cuts://collection   cuts://settings   cuts://update
 
     @objc private func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let raw = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
-              let comps = URLComponents(string: raw),
-              comps.scheme == "cuts",
-              let encoded = comps.queryItems?.first(where: { $0.name == "url" })?.value,
-              let url = YouTubeURL.extract(from: encoded) else { return }
-        startCut(url)
+              let comps = URLComponents(string: raw), comps.scheme == "cuts" else { return }
+        switch comps.host {
+        case "cut":
+            if let encoded = comps.queryItems?.first(where: { $0.name == "url" })?.value,
+               let url = YouTubeURL.extract(from: encoded) {
+                startCut(url)
+            }
+        case "collection": collection.open()
+        case "settings": openSettings()
+        case "update": updateYtdlp()
+        default: break
+        }
     }
 }

@@ -18,20 +18,20 @@ struct CollectionView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0, pinnedViews: []) {
-                        // A finished cut is already in the list below; keep
-                        // in-flight and failed cards up top.
-                        if let active = downloads.current, active.phase != .done {
+                        // In flight up top; once it lands (filed or failed)
+                        // the library row below takes over.
+                        if let active = downloads.current, !active.phase.isTerminal {
                             ActiveRow(cut: active)
                             Divider().opacity(0.25)
                         }
-                        ForEach(downloads.queued, id: \.self) { url in
-                            QueuedRow(url: url)
+                        ForEach(downloads.queued) { item in
+                            QueuedRow(url: item.url)
                             Divider().opacity(0.25)
                         }
                         ForEach(grouped, id: \.0) { label, cuts in
                             DateHeader(label: label)
                             ForEach(cuts) { cut in
-                                CutRow(cut: cut, library: library)
+                                CutRow(cut: cut, library: library, downloads: downloads)
                                 Divider().opacity(0.25)
                             }
                         }
@@ -43,12 +43,14 @@ struct CollectionView: View {
     }
 
     /// Cuts grouped by calendar day, newest first (library is already sorted).
+    /// A row being retried is represented by the ActiveRow while in flight.
     private var grouped: [(String, [Cut])] {
         let cal = Calendar.current
         let fmt = DateFormatter()
         fmt.dateFormat = "MMM d"
+        let inFlight = downloads.current.flatMap { $0.phase.isTerminal ? nil : $0.id }
         var out: [(String, [Cut])] = []
-        for cut in library.cuts {
+        for cut in library.cuts where cut.id != inFlight {
             let label = cal.isDateInToday(cut.date) ? "TODAY"
                 : cal.isDateInYesterday(cut.date) ? "YESTERDAY"
                 : fmt.string(from: cut.date).uppercased()
@@ -113,58 +115,44 @@ struct DateHeader: View {
 struct CutRow: View {
     let cut: Cut
     let library: Library
-    @ObservedObject private var stems = StemSplitter.shared
+    let downloads: DownloadManager
     @State private var hovering = false
 
-    private var isSplitting: Bool { stems.inFlight.contains(cut.filePath) }
-    private var splitFailed: Bool { stems.failed.contains(cut.filePath) }
-
-    /// Existing stems, recomputed when a split lands (stemsVersion invalidates).
-    private var stemFiles: [URL] {
-        _ = stems.stemsVersion
-        return StemSplitter.existingStems(forBasename: cut.basename)
-    }
-
     var body: some View {
-        let stemsOnDisk = stemFiles
-        HStack(spacing: 11) {
+        let row = HStack(spacing: 11) {
             MiniVinyl(artPath: cut.artPath)
                 .frame(width: 44, height: 44)
+                .opacity(cut.isFailed ? 0.55 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(cut.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                Text(subLine(stemCount: stemsOnDisk.count))
+                Text(subLine)
                     .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(splitFailed && !isSplitting ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(cut.isFailed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
 
-            if isSplitting {
-                ProgressView().controlSize(.small)
-            } else if hovering {
-                if let first = stemsOnDisk.first {
-                    Button {
-                        NSWorkspace.shared.activateFileViewerSelecting([first])
-                    } label: {
-                        Image(systemName: "waveform")
+            if hovering {
+                if cut.isFailed {
+                    Button { downloads.retry(cut) } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.orange)
+                    .help("Retry this cut")
+                } else if let url = cut.fileURL {
+                    Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
+                        Image(systemName: "magnifyingglass")
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("Reveal stems in Finder (\(stemsOnDisk.count)/5)")
+                    .help("Reveal FLAC in Finder")
                 }
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([cut.fileURL])
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Reveal FLAC in Finder")
             }
         }
         .padding(.horizontal, 14)
@@ -172,42 +160,37 @@ struct CutRow: View {
         .contentShape(Rectangle())
         .background(hovering ? Color.primary.opacity(0.06) : .clear)
         .onHover { hovering = $0 }
-        .onDrag {
-            let provider = NSItemProvider(contentsOf: cut.fileURL) ?? NSItemProvider()
-            provider.suggestedName = cut.fileURL.lastPathComponent
-            return provider
-        }
         .contextMenu {
-            Button(stemsOnDisk.isEmpty ? "Split to Stems" : "Re-split to Stems") {
-                StemSplitter.shared.split(cut)
-            }
-            .disabled(isSplitting)
-            if let first = stemsOnDisk.first {
-                Button("Reveal First Stem (\(first.deletingLastPathComponent().lastPathComponent))") {
-                    NSWorkspace.shared.activateFileViewerSelecting([first])
-                }
-            }
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([cut.fileURL])
+            if cut.isFailed {
+                Button("Retry") { downloads.retry(cut) }
+            } else if let url = cut.fileURL {
+                Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
             Button("Copy YouTube Link") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(cut.url, forType: .string)
             }
             Divider()
-            Button("Remove from Shelf (keeps file)") {
+            Button(cut.isFailed ? "Remove from Shelf" : "Remove from Shelf (keeps file)") {
                 library.remove(cut)
             }
         }
+
+        // Only a filed cut drags out as a file (Finder, Ableton).
+        if let url = cut.fileURL, !cut.isFailed {
+            row.onDrag {
+                let provider = NSItemProvider(contentsOf: url) ?? NSItemProvider()
+                provider.suggestedName = url.lastPathComponent
+                return provider
+            }
+        } else {
+            row
+        }
     }
 
-    private func subLine(stemCount: Int) -> String {
-        if let live = stems.status[cut.filePath] {
-            return "\(cut.cutLabel) · \(live)"
-        }
-        var s = "\(cut.cutLabel) · \(cut.durationLabel) · FLAC"
-        if stemCount > 0 { s += " · \(stemCount)/5 stems" }
-        return s
+    private var subLine: String {
+        if cut.isFailed { return "\(cut.cutLabel) · failed — \(cut.error ?? "unknown error")" }
+        return "\(cut.cutLabel) · \(cut.durationLabel) · FLAC"
     }
 }
 

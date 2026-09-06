@@ -60,10 +60,13 @@ final class CollectionPanel: NSPanel {
         alphaValue = 0
         orderFrontRegardless()
         onVisibilityChange?(true)
-        NSAnimationContext.runAnimationGroup { ctx in
+        NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.15
             animator().alphaValue = 1
-        }
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            Log.d("collection shown alpha=\(self.alphaValue) visible=\(self.isVisible) frame=\(self.frame)")
+        })
         installMonitors()
     }
 

@@ -1,10 +1,11 @@
 import Foundation
 import AppKit
 
-/// Runs the validated pipeline:
+/// Runs the pipeline (tools resolved by `Tools`):
 /// yt-dlp -f bestaudio -x --audio-format flac --embed-thumbnail --embed-metadata
-///        --newline --no-playlist --print after_move:filepath --no-quiet
-///        -P home:<dest> -P temp:<App Support/Cuts/tmp> -o %(title)s.%(ext)s <url>
+///        --ffmpeg-location <bundle> --js-runtimes deno:<bundle>/deno
+///        --print "after_move:@@done|%(duration)s|%(filepath)s"
+///        -P home:<destination> -P temp:<App Support/Cuts/tmp> -o %(title)s.%(ext)s <url>
 /// Intermediates (thumbnail, .webm, .part) live in the temp dir, so a failed
 /// cut never leaves junk in the music folder.
 enum EnqueueResult {
@@ -14,18 +15,25 @@ enum EnqueueResult {
     case rejected         // no YouTube video id in the text
 }
 
+/// A link waiting its turn. `reuse` is the failed row a retry replaces.
+struct QueuedCut: Identifiable {
+    let id = UUID()
+    let url: String
+    let reuse: Cut?
+}
+
 final class DownloadManager: ObservableObject {
     @Published var current: ActiveCut?
-    /// Canonical URLs waiting their turn (one yt-dlp at a time).
-    @Published private(set) var queued: [String] = []
+    /// Waiting their turn (one yt-dlp at a time).
+    @Published private(set) var queued: [QueuedCut] = []
 
     private let library: Library
+    private let tools = Tools.shared
     private var proc: Process?
+    var onStarted: ((ActiveCut) -> Void)?
     var onFinished: ((Cut) -> Void)?
-    var onFailed: ((_ url: String, _ message: String) -> Void)?
+    var onFailed: ((Cut) -> Void)?
 
-    private static let ytdlp = "/opt/homebrew/bin/yt-dlp"
-    private static let ffprobe = "/opt/homebrew/bin/ffprobe"
     private static let tempDir = Library.supportDir.appendingPathComponent("tmp", isDirectory: true)
 
     /// How long a finished / failed card stays up before the shelf moves on
@@ -47,19 +55,31 @@ final class DownloadManager: ObservableObject {
     func enqueue(_ rawURL: String) -> EnqueueResult {
         guard let id = YouTubeURL.videoID(in: rawURL) else { return .rejected }
         let url = YouTubeURL.canonical(id)
-
         // Compare by id, not string: rows filed before canonicalization keep
         // their original long URLs.
-        if let existing = library.cuts.first(where: { YouTubeURL.videoID(in: $0.url) == id }),
-           FileManager.default.fileExists(atPath: existing.filePath) {
+        let existing = library.cuts.first { YouTubeURL.videoID(in: $0.url) == id }
+        if let existing, !existing.isFailed, existing.fileExists {
             Log.d("duplicate: \(url) already filed as \(existing.cutLabel)")
             return .duplicate(existing)
         }
+        // Dropping a link that failed before retries it in place.
+        return schedule(url: url, reuse: existing?.isFailed == true ? existing : nil)
+    }
+
+    /// Retry a failed row: same CUT Nº, same slot.
+    @discardableResult
+    func retry(_ cut: Cut) -> EnqueueResult {
+        schedule(url: cut.url, reuse: cut)
+    }
+
+    private func schedule(url: String, reuse: Cut?) -> EnqueueResult {
         if isBusy {
-            if current?.url != url && !queued.contains(url) { queued.append(url) }
+            if current?.url != url && !queued.contains(where: { $0.url == url }) {
+                queued.append(QueuedCut(url: url, reuse: reuse))
+            }
             return .queued
         }
-        start(url)
+        start(url, reuse: reuse)
         return .started
     }
 
@@ -76,16 +96,20 @@ final class DownloadManager: ObservableObject {
         Self.wipeTemp()
     }
 
-    private func start(_ url: String) {
-        let cut = ActiveCut(url: url, cutNumber: library.nextCutNumber)
+    private func start(_ url: String, reuse: Cut?) {
+        let cut = ActiveCut(url: url,
+                            cutNumber: reuse?.cutNumber ?? library.nextCutNumber,
+                            id: reuse?.id ?? UUID())
         current = cut
         fetchOEmbed(for: cut)
         runYtdlp(for: cut)
+        onStarted?(cut)
     }
 
     private func startNextIfAny() {
         guard !queued.isEmpty else { return }
-        start(queued.removeFirst())
+        let next = queued.removeFirst()
+        start(next.url, reuse: next.reuse)
     }
 
     // MARK: - oEmbed (instant title + art, before yt-dlp even spins up)
@@ -118,33 +142,35 @@ final class DownloadManager: ObservableObject {
     // MARK: - yt-dlp
 
     private func runYtdlp(for cut: ActiveCut) {
-        guard FileManager.default.isExecutableFile(atPath: Self.ytdlp) else {
-            finish(cut: cut, exitCode: -1,
-                   lastLine: "yt-dlp not found at \(Self.ytdlp) — brew install yt-dlp")
+        guard FileManager.default.isExecutableFile(atPath: tools.ytdlp.path) else {
+            finish(cut: cut, exitCode: -1, lastLine: "yt-dlp not found at \(tools.ytdlp.path)")
             return
         }
-        try? FileManager.default.createDirectory(at: Self.tempDir, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: Self.tempDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: Library.destinationDir, withIntermediateDirectories: true)
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: Self.ytdlp)
-        proc.arguments = [
+        proc.executableURL = tools.ytdlp
+        var args = [
             "-f", "bestaudio",
             "-x", "--audio-format", "flac",
             "--embed-thumbnail", "--embed-metadata",
             "--newline", "--no-playlist", "--no-quiet",
             "--socket-timeout", "30", "--retries", "3",
-            "--print", "after_move:filepath",
+            "--ffmpeg-location", tools.ffmpegDir.path,
+        ]
+        if let deno = tools.deno { args += ["--js-runtimes", "deno:\(deno.path)"] }
+        args += [
+            // Duration first: a title may legally contain "|", the path is the remainder.
+            "--print", "after_move:@@done|%(duration)s|%(filepath)s",
             "-P", "home:" + Library.destinationDir.path,
             "-P", "temp:" + Self.tempDir.path,
             "-o", "%(title)s.%(ext)s",
             cut.url,
         ]
-        // Apps launched from Finder/`open` get a bare PATH without
-        // /opt/homebrew/bin — yt-dlp then can't find ffmpeg (or deno, which
-        // YouTube extraction now wants). Make it explicit.
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/opt/homebrew/bin:" + (env["PATH"] ?? "/usr/bin:/bin")
-        proc.environment = env
+        proc.arguments = args
+        proc.environment = tools.processEnvironment
 
         let pipe = Pipe()
         proc.standardOutput = pipe
@@ -168,7 +194,7 @@ final class DownloadManager: ObservableObject {
 
         proc.terminationHandler = { [weak self] p in
             pipe.fileHandleForReading.readabilityHandler = nil
-            // Drain whatever is left after termination (the final filepath usually lands here).
+            // Drain whatever is left after termination (the final @@done line usually lands here).
             if let rest = try? pipe.fileHandleForReading.readToEnd(),
                let tail = String(data: rest, encoding: .utf8) {
                 for line in tail.split(separator: "\n").map(String.init) {
@@ -190,6 +216,7 @@ final class DownloadManager: ObservableObject {
     }
 
     private var finalPath: String?
+    private var finalDuration: Double?
 
     private func handle(line: String, for cut: ActiveCut) {
         let apply: () -> Void
@@ -201,8 +228,12 @@ final class DownloadManager: ObservableObject {
         } else if line.hasPrefix("[ExtractAudio]") || line.hasPrefix("[Metadata]")
                     || line.hasPrefix("[EmbedThumbnail]") || line.hasPrefix("[ThumbnailsConvertor]") {
             apply = { cut.phase = .pressing }
-        } else if line.hasPrefix("/"), line.lowercased().hasSuffix(".flac") {
-            finalPath = line
+        } else if line.hasPrefix("@@done|") {
+            let parts = line.dropFirst("@@done|".count).split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            if parts.count == 2 {
+                finalDuration = Double(parts[0]) // "NA" → nil
+                finalPath = String(parts[1])
+            }
             apply = {}
         } else if line.hasPrefix("ERROR") {
             apply = { cut.phase = .failed(line) }
@@ -214,7 +245,9 @@ final class DownloadManager: ObservableObject {
 
     private func finish(cut: ActiveCut, exitCode: Int32, lastLine: String) {
         let path = finalPath
+        let duration = finalDuration
         finalPath = nil
+        finalDuration = nil
         proc = nil
 
         // The card stays on `current` in its terminal state so "filed ✓" /
@@ -222,17 +255,17 @@ final class DownloadManager: ObservableObject {
         if exitCode == 0, let path, FileManager.default.fileExists(atPath: path) {
             cut.phase = .done
             let record = Cut(
-                id: UUID(),
+                id: cut.id,
                 cutNumber: cut.cutNumber,
                 url: cut.url,
                 title: cut.hasTitle ? cut.title : URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
                 uploader: cut.uploader,
                 filePath: path,
                 artPath: cut.artPath,
-                duration: Self.probeDuration(path),
+                duration: duration,
                 date: cut.date
             )
-            library.add(record)
+            library.upsert(record)
             onFinished?(record)
         } else {
             let raw: String
@@ -243,7 +276,21 @@ final class DownloadManager: ObservableObject {
             // No oEmbed title either (private/removed video): show the link instead.
             if !cut.hasTitle { cut.title = YouTubeURL.display(cut.url) }
             cut.phase = .failed(msg)
-            onFailed?(cut.url, msg)
+            let record = Cut(
+                id: cut.id,
+                cutNumber: cut.cutNumber,
+                url: cut.url,
+                title: cut.title,
+                uploader: cut.uploader,
+                status: CutStatus.failed,
+                error: msg,
+                filePath: nil,
+                artPath: cut.artPath,
+                duration: nil,
+                date: cut.date
+            )
+            library.upsert(record)
+            onFailed?(record)
         }
 
         // The next queued cut replaces the result card after its dwell.
@@ -263,7 +310,7 @@ final class DownloadManager: ObservableObject {
             s.removeSubrange(r)
         }
         if s.contains("403") {
-            s = "YouTube refused the download (403) — yt-dlp is probably out of date: brew upgrade yt-dlp"
+            s = "YouTube refused the download (403) — update yt-dlp in Settings, then retry"
         } else if s.lowercased().contains("sign in to confirm") {
             s = "YouTube wants a sign-in (bot check) — try again later or update yt-dlp"
         }
@@ -275,20 +322,5 @@ final class DownloadManager: ObservableObject {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil) else { return }
         for item in items { try? fm.removeItem(at: item) }
-    }
-
-    private static func probeDuration(_ path: String) -> Double? {
-        guard FileManager.default.isExecutableFile(atPath: ffprobe) else { return nil }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: ffprobe)
-        p.arguments = ["-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        guard (try? p.run()) != nil else { return nil }
-        p.waitUntilExit()
-        guard let data = try? pipe.fileHandleForReading.readToEnd(),
-              let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        else { return nil }
-        return Double(s)
     }
 }

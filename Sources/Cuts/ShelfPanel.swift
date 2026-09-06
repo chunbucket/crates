@@ -133,12 +133,15 @@ final class ShelfPanel: NSPanel {
         alphaValue = 0
         orderFrontRegardless()
 
-        NSAnimationContext.runAnimationGroup { ctx in
+        NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.28
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             animator().setFrame(home, display: true)
             animator().alphaValue = 1
-        }
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            Log.d("shelf shown alpha=\(self.alphaValue) visible=\(self.isVisible) frame=\(self.frame)")
+        })
     }
 
     func slideOut() {

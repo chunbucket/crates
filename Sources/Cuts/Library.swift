@@ -1,6 +1,6 @@
 import Foundation
 
-/// JSON-backed index of every finished cut, plus the running cut counter.
+/// JSON-backed index of every cut (filed or failed), plus the running counter.
 final class Library: ObservableObject {
     @Published private(set) var cuts: [Cut] = []
 
@@ -11,21 +11,23 @@ final class Library: ObservableObject {
     static let artDir = supportDir.appendingPathComponent("art", isDirectory: true)
     private static let indexURL = supportDir.appendingPathComponent("library.json")
 
-    static let destinationDir: URL = {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("ency_me/making music/song samples/full songs", isDirectory: true)
-    }()
+    /// Where finished FLACs go — a setting since v0.2.
+    static var destinationDir: URL { Settings.shared.destinationDir }
 
     init() {
         try? FileManager.default.createDirectory(at: Self.artDir, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(at: Self.destinationDir, withIntermediateDirectories: true)
         load()
     }
 
+    /// Failed rows keep their number, so numbering stays monotonic.
     var nextCutNumber: Int { (cuts.map(\.cutNumber).max() ?? 0) + 1 }
 
-    func add(_ cut: Cut) {
-        cuts.insert(cut, at: 0)
+    /// Insert, or replace the row with the same id (a retried cut lands in
+    /// the same slot with the same CUT Nº).
+    func upsert(_ cut: Cut) {
+        cuts.removeAll { $0.id == cut.id }
+        cuts.append(cut)
+        cuts.sort { $0.cutNumber > $1.cutNumber }
         save()
     }
 
