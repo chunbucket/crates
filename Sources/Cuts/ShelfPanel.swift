@@ -43,9 +43,37 @@ final class DropCatcherView: NSView {
     }
 }
 
+/// NSHostingView that reports its content's ideal size whenever SwiftUI
+/// invalidates it. (A GeometryReader + preference inside the view never
+/// delivered a size here; the hosting view's own invalidation does.)
+final class SizeReportingHostingView<Content: View>: NSHostingView<Content> {
+    var onSizeChange: ((CGSize) -> Void)?
+    private var lastReported: CGSize = .zero
+
+    required init(rootView: Content) { super.init(rootView: rootView) }
+    @objc required dynamic init?(coder: NSCoder) { fatalError() }
+
+    override func invalidateIntrinsicContentSize() {
+        super.invalidateIntrinsicContentSize()
+        report()
+    }
+
+    override func layout() {
+        super.layout()
+        report()
+    }
+
+    private func report() {
+        let size = fittingSize
+        guard size.width > 1, size.height > 1, size != lastReported else { return }
+        lastReported = size
+        onSizeChange?(size)
+    }
+}
+
 /// Non-activating floating panel that slides in from the right screen edge.
 final class ShelfPanel: NSPanel {
-    private var hosting: NSHostingView<ShelfView>?
+    private var hosting: SizeReportingHostingView<ShelfView>?
     private let state = ShelfState()
     /// Called once the panel has fully slid away and is ordered out.
     var onHidden: (() -> Void)?
@@ -68,10 +96,10 @@ final class ShelfPanel: NSPanel {
         catcher.onURLDrop = onDrop
         catcher.onHover = { [state] hovering in state.hovering = hovering }
 
-        let host = NSHostingView(rootView: ShelfView(
+        let host = SizeReportingHostingView(rootView: ShelfView(
             downloads: downloads, state: state,
-            onClose: { [weak self] in self?.slideOut() },
-            onSize: { [weak self] size in self?.contentDidResize(to: size) }))
+            onClose: { [weak self] in self?.slideOut() }))
+        host.onSizeChange = { [weak self] size in self?.contentDidResize(to: size) }
         host.frame = catcher.bounds
         host.autoresizingMask = [.width, .height]
         catcher.addSubview(host)
@@ -101,12 +129,13 @@ final class ShelfPanel: NSPanel {
     /// under the slide-in that interrupted it.
     private var slideOutToken: NSObject?
 
-    /// SwiftUI reports its real laid-out size; animate the panel to match.
+    /// The hosting view reports its ideal size; animate the panel to match.
     private func contentDidResize(to size: CGSize) {
         let newSize = NSSize(width: size.width, height: size.height)
         guard newSize.width > 1, newSize.height > 1 else { return }
         let previous = contentSize
         contentSize = newSize
+        Log.d("shelf content \(previous.map { "\(Int($0.height))" } ?? "nil")→\(Int(newSize.height)) visible=\(isVisible) slidingOut=\(slideOutToken != nil) frame=\(Int(frame.height))")
         guard isVisible, slideOutToken == nil, previous != newSize else { return }
         let target = homeFrame(for: newSize)
         guard target != frame else { return }

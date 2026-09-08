@@ -3,17 +3,12 @@ import UniformTypeIdentifiers
 
 /// Content of the slide-in shelf panel: a drop target that becomes the
 /// record player while a cut is in progress. Drops are accepted by the
-/// AppKit DropCatcherView underneath; this view only renders.
-struct ShelfSizeKey: PreferenceKey {
-    static var defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
-}
-
+/// AppKit DropCatcherView underneath; this view only renders. Its size is
+/// read by the hosting view (SizeReportingHostingView), not reported from here.
 struct ShelfView: View {
     @ObservedObject var downloads: DownloadManager
     @ObservedObject var state: ShelfState
     var onClose: () -> Void
-    var onSize: (CGSize) -> Void
 
     @State private var closeHover = false
 
@@ -54,14 +49,8 @@ struct ShelfView: View {
             .padding(8)
             .help("Put the shelf away (download keeps running)")
         }
-        // Report the real laid-out size so the panel can track it exactly —
-        // no stale fittingSize, no guessed re-measure delays.
-        .background(
-            GeometryReader { g in
-                Color.clear.preference(key: ShelfSizeKey.self, value: g.size)
-            }
-        )
-        .onPreferenceChange(ShelfSizeKey.self) { onSize($0) }
+        // Always the ideal size, even while the panel is still animating to it.
+        .fixedSize()
         .environment(\.colorScheme, .dark)
     }
 
