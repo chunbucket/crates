@@ -210,8 +210,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         var trash = Settings.shared.removePolicy == RemovePolicy.trash
         if Settings.shared.removePolicy == RemovePolicy.ask {
+            // The panel floats at status-bar level, above a modal alert (8 vs 25);
+            // drop it to plain floating while the prompt is up so the alert lands
+            // on top, and keep it open behind the alert.
             collection.holdOpen = true
-            defer { collection.holdOpen = false }
+            let level = collection.level
+            collection.level = .floating
+            defer {
+                collection.holdOpen = false
+                collection.level = level
+            }
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
             alert.messageText = "Remove “\(cut.title)” from the shelf?"
