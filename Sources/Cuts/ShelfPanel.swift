@@ -156,37 +156,43 @@ final class ShelfPanel: NSPanel {
         let size = contentSize ?? hosting?.fittingSize ?? NSSize(width: 280, height: 320)
         let home = homeFrame(for: size)
         Log.d("shelf slideIn size=\(size) home=(\(Int(home.origin.x)),\(Int(home.origin.y)))")
-        // Start just off the screen edge; NSWindow's animator only animates
-        // `frame` (not setFrameOrigin), so both legs go through setFrame.
-        setFrame(home.offsetBy(dx: size.width * 1.2, dy: 0), display: false)
-        alphaValue = 0
+        // Start fully off the screen edge and travel in — a mechanical slide,
+        // no fade. (NSWindow's animator only animates `frame`, not
+        // setFrameOrigin, so both legs go through setFrame.)
+        setFrame(home.offsetBy(dx: Self.offscreenTravel(for: size.width), dy: 0), display: false)
         orderFrontRegardless()
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.28
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             animator().setFrame(home, display: true)
-            animator().alphaValue = 1
         }
     }
+
+    /// Horizontal distance that puts the panel entirely past the screen edge
+    /// (home sits `margin` in from the edge, so 1.2× its width clears it).
+    private static func offscreenTravel(for width: CGFloat) -> CGFloat { width * 1.2 }
 
     func slideOut() {
         guard isVisible, slideOutToken == nil else { return }
         Log.d("shelf slideOut")
         let token = NSObject()
         slideOutToken = token
-        let off = frame.offsetBy(dx: frame.width * 0.4, dy: 0)
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.22
+        // Mirror of the slide-in: travel all the way off the edge, no fade.
+        // NSWindow's frame animation runs instantly when the group is given a
+        // completion handler, so the hide is timed off the duration instead.
+        let off = frame.offsetBy(dx: Self.offscreenTravel(for: frame.width), dy: 0)
+        let duration = 0.26
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = duration
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             animator().setFrame(off, display: true)
-            animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.03) { [weak self] in
             guard let self, self.slideOutToken === token else { return } // a slideIn took over
             self.slideOutToken = nil
             self.orderOut(nil)
-            self.alphaValue = 1
             self.onHidden?()
-        })
+        }
     }
 }
