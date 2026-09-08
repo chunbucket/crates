@@ -11,6 +11,8 @@ struct CollectionView: View {
     var onRetry: (Cut) -> Void
     /// For a 403: refresh yt-dlp first, then re-cut.
     var onUpdateAndRetry: (Cut) -> Void
+    /// Remove from the shelf (owner decides about the file).
+    var onRemove: (Cut) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,7 +36,7 @@ struct CollectionView: View {
                         ForEach(grouped, id: \.0) { label, cuts in
                             DateHeader(label: label)
                             ForEach(cuts) { cut in
-                                CutRow(cut: cut, library: library, onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry)
+                                CutRow(cut: cut, onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry, onRemove: onRemove)
                                 Divider().opacity(0.25)
                             }
                         }
@@ -117,9 +119,10 @@ struct DateHeader: View {
 
 struct CutRow: View {
     let cut: Cut
-    let library: Library
     var onRetry: (Cut) -> Void
     var onUpdateAndRetry: (Cut) -> Void
+    var onRemove: (Cut) -> Void
+    @ObservedObject private var player = Player.shared
     @State private var hovering = false
     /// Checked once per appearance, not per render.
     @State private var fileMissing = false
@@ -128,10 +131,13 @@ struct CutRow: View {
     /// Failed, or filed but the FLAC has gone: either way the fix is a re-cut.
     private var needsRecut: Bool { cut.isFailed || fileMissing }
     private var looksLike403: Bool { cut.error?.contains("403") == true }
+    /// This row is loaded in the player (playing or paused).
+    private var isLoaded: Bool { player.isCurrent(cut) }
+    private var isPlaying: Bool { isLoaded && player.isPlaying }
 
     var body: some View {
         let row = HStack(spacing: 11) {
-            MiniVinyl(artPath: cut.artPath)
+            MiniVinyl(artPath: cut.artPath, spinning: isPlaying)
                 .frame(width: 44, height: 44)
                 .opacity(needsRecut ? 0.55 : 1)
 
@@ -139,14 +145,29 @@ struct CutRow: View {
                 Text(cut.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                Text(subLine)
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(needsRecut ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                    .lineLimit(1)
+                if isLoaded {
+                    HStack(spacing: 8) {
+                        Scrubber(time: player.time, duration: player.duration) { player.seek(to: $0) }
+                        Text("\(Self.mmss(player.time)) / \(Self.mmss(player.duration))")
+                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                } else {
+                    Text(subLine)
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(needsRecut ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 4)
 
-            if hovering {
+            if isLoaded {
+                // Transport stays visible while loaded, not just on hover.
+                RowButton(symbol: isPlaying ? "pause.fill" : "play.fill",
+                          help: isPlaying ? "Pause" : "Play") { player.toggle(cut) }
+                    .foregroundStyle(Color.cutsAmber)
+            } else if hovering {
                 if needsRecut {
                     Button { onRetry(cut) } label: {
                         Image(systemName: "arrow.clockwise")
@@ -156,14 +177,10 @@ struct CutRow: View {
                     .foregroundStyle(.orange)
                     .help(cut.isFailed ? "Retry this cut" : "Cut it again (file is missing)")
                 } else if let url = cut.fileURL {
-                    Button { reveal(url) } label: {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Reveal FLAC in Finder")
+                    RowButton(symbol: "play.fill", help: "Play") { player.play(cut) }
+                    RowButton(symbol: "magnifyingglass", help: "Reveal FLAC in Finder") { reveal(url) }
                 }
+                RowButton(symbol: "trash", help: "Remove from shelf…") { onRemove(cut) }
             }
         }
         .padding(.horizontal, 14)
@@ -184,9 +201,7 @@ struct CutRow: View {
                 NSPasteboard.general.setString(cut.url, forType: .string)
             }
             Divider()
-            Button(needsRecut ? "Remove from Shelf" : "Remove from Shelf (keeps file)") {
-                library.remove(cut)
-            }
+            Button("Remove from Shelf…") { onRemove(cut) }
         }
 
         // Only a cut whose file is really there drags out (Finder, Ableton).
@@ -205,6 +220,65 @@ struct CutRow: View {
         if cut.isFailed { return "\(cut.cutLabel) · failed — \(cut.error ?? "unknown error")" }
         if fileMissing { return "\(cut.cutLabel) · file missing — moved or deleted?" }
         return "\(cut.cutLabel) · \(cut.durationLabel) · FLAC"
+    }
+
+    private static func mmss(_ seconds: Double) -> String {
+        let s = Int(seconds.rounded(.down))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+extension Color {
+    /// The app's accent: the menu bar disc when the collection is open, the scrubber fill.
+    static let cutsAmber = Color(red: 1.0, green: 0.71, blue: 0.33)
+}
+
+/// The 11pt symbol buttons that appear at the trailing edge of a row.
+struct RowButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 18, height: 18)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(help)
+    }
+}
+
+/// Playback position as a thin track with a knob; drag anywhere on it to seek.
+struct Scrubber: View {
+    var time: Double
+    var duration: Double
+    var onSeek: (Double) -> Void
+    @State private var dragFraction: Double?
+
+    var body: some View {
+        GeometryReader { g in
+            let width = g.size.width
+            let fraction = dragFraction ?? (duration > 0 ? time / duration : 0)
+            let x = max(0, min(width, width * fraction))
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.15)).frame(height: 3)
+                Capsule().fill(Color.cutsAmber).frame(width: x, height: 3)
+                Circle().fill(Color.primary).frame(width: 9, height: 9).offset(x: x - 4.5)
+            }
+            .frame(height: 14)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { dragFraction = min(max($0.location.x / width, 0), 1) }
+                .onEnded {
+                    let f = min(max($0.location.x / width, 0), 1)
+                    dragFraction = nil
+                    onSeek(f * duration)
+                })
+        }
+        .frame(height: 14)
     }
 }
 
@@ -283,6 +357,8 @@ struct QueuedRow: View {
 
 struct MiniVinyl: View {
     var artPath: String?
+    var spinning = false
+    @State private var angle: Double = 0
 
     var body: some View {
         ZStack {
@@ -295,6 +371,16 @@ struct MiniVinyl: View {
                 .padding(9)
             Circle().fill(Color(white: 0.10)).frame(width: 3.5, height: 3.5)
         }
+        .rotationEffect(.degrees(angle))
+        .onAppear { if spinning { spin() } }
+        .onChange(of: spinning) { _, now in
+            if now { spin() } else { withAnimation(.easeOut(duration: 0.6)) { angle = angle.truncatingRemainder(dividingBy: 360) } }
+        }
+    }
+
+    private func spin() {
+        angle = 0
+        withAnimation(.linear(duration: 3.2).repeatForever(autoreverses: false)) { angle = 360 }
     }
 
     @ViewBuilder

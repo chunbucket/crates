@@ -2,12 +2,21 @@ import AppKit
 import SwiftUI
 import ServiceManagement
 
+/// What "Remove from Shelf" does with the FLAC. Strings on purpose (plain
+/// UserDefaults values).
+enum RemovePolicy {
+    static let ask = "ask"
+    static let keep = "keep"
+    static let trash = "trash"
+}
+
 /// User preferences, UserDefaults-backed. Paths are stored as plain strings
 /// (no bookmarks) so the index and settings stay portable.
 final class Settings: ObservableObject {
     static let shared = Settings()
 
     private static let destinationKey = "destinationDir"
+    private static let removePolicyKey = "removePolicy"
     private static let home = FileManager.default.homeDirectoryForCurrentUser
 
     /// Fresh-install default.
@@ -23,6 +32,10 @@ final class Settings: ObservableObject {
     /// Read from launchd on demand (an XPC round-trip) — only the Settings form asks.
     var launchAtLogin: Bool { SMAppService.mainApp.status == .enabled }
 
+    @Published var removePolicy: String {
+        didSet { UserDefaults.standard.set(removePolicy, forKey: Self.removePolicyKey) }
+    }
+
     private init() {
         if let stored = UserDefaults.standard.string(forKey: Self.destinationKey) {
             destinationDir = URL(fileURLWithPath: stored, isDirectory: true)
@@ -31,6 +44,7 @@ final class Settings: ObservableObject {
         } else {
             destinationDir = Self.defaultDestination
         }
+        removePolicy = UserDefaults.standard.string(forKey: Self.removePolicyKey) ?? RemovePolicy.ask
     }
 
     func setLaunchAtLogin(_ on: Bool) {
@@ -81,6 +95,11 @@ struct SettingsView: View {
                         Button("Update", action: updateYtdlp)
                     }
                 }
+            }
+            Picker("Removing a cut", selection: $settings.removePolicy) {
+                Text("Ask each time").tag(RemovePolicy.ask)
+                Text("Keep the file").tag(RemovePolicy.keep)
+                Text("Move the file to Trash").tag(RemovePolicy.trash)
             }
             LabeledContent("Cuts") { Text(Settings.appVersion).foregroundStyle(.secondary) }
         }

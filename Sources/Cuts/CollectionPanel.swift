@@ -11,8 +11,13 @@ final class CollectionPanel: NSPanel {
     weak var statusWindow: NSWindow?
     var onVisibilityChange: ((Bool) -> Void)?
 
+    /// Set while a sheet/alert we own is up, so the outside-click monitors
+    /// don't close the panel behind it.
+    var holdOpen = false
+
     init(library: Library, downloads: DownloadManager,
-         onRetry: @escaping (Cut) -> Void, onUpdateAndRetry: @escaping (Cut) -> Void) {
+         onRetry: @escaping (Cut) -> Void, onUpdateAndRetry: @escaping (Cut) -> Void,
+         onRemove: @escaping (Cut) -> Void) {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 340, height: 440),
                    styleMask: [.nonactivatingPanel, .borderless],
                    backing: .buffered, defer: false)
@@ -26,7 +31,8 @@ final class CollectionPanel: NSPanel {
         animationBehavior = .none
 
         let root = AnyView(
-            CollectionView(library: library, downloads: downloads, onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry)
+            CollectionView(library: library, downloads: downloads,
+                           onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry, onRemove: onRemove)
                 .background(.ultraThickMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
@@ -86,12 +92,15 @@ final class CollectionPanel: NSPanel {
     private func installMonitors() {
         removeMonitors()
         if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown],
-                                                     handler: { [weak self] _ in self?.closePanel() }) {
+                                                     handler: { [weak self] _ in
+            guard let self, !self.holdOpen else { return }
+            self.closePanel()
+        }) {
             monitors.append(m)
         }
         if let m = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown],
                                                     handler: { [weak self] e in
-            guard let self else { return e }
+            guard let self, !self.holdOpen else { return e }
             if e.window !== self && e.window !== self.statusWindow { self.closePanel() }
             return e
         }) {

@@ -21,7 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shelf = ShelfPanel(downloads: downloads) { [weak self] url in
             self?.startCut(url)
         }
-        shelf.onHidden = { [weak self] in self?.downloads.dismissResult() }
+        shelf.onHidden = { [weak self] in
+            self?.downloads.dismissResult()
+            Player.shared.stop()
+        }
 
         setupStatusItem()
         setupDownloadCallbacks()
@@ -105,11 +108,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     self?.startCut(cut.url)
                 }
-            })
+            },
+            onRemove: { [weak self] cut in self?.removeCut(cut) })
         collection.statusWindow = statusItem.button?.window
         collection.onVisibilityChange = { [weak self] visible in
             guard let self else { return }
             self.statusItem.button?.image = self.vinylIcon(active: visible)
+            // The row transport is the only control, so closing the shelf stops playback.
+            if !visible { Player.shared.stop() }
         }
     }
 
@@ -135,6 +141,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         startCut(url)
+    }
+
+    // MARK: - Removing a cut
+
+    /// Take the row off the shelf; ask (once, unless told not to) whether the
+    /// FLAC goes to the Trash with it. Failed / missing-file rows have no file
+    /// to ask about.
+    private func removeCut(_ cut: Cut) {
+        Player.shared.stopIfCurrent(cut)
+        guard cut.fileExists, let url = cut.fileURL else {
+            library.remove(cut)
+            return
+        }
+        var trash = Settings.shared.removePolicy == RemovePolicy.trash
+        if Settings.shared.removePolicy == RemovePolicy.ask {
+            collection.holdOpen = true
+            defer { collection.holdOpen = false }
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "Remove “\(cut.title)” from the shelf?"
+            alert.informativeText = "The FLAC can stay in your cuts folder, or go to the Trash with it."
+            alert.addButton(withTitle: "Remove, Keep File")
+            alert.addButton(withTitle: "Remove & Trash File")
+            alert.addButton(withTitle: "Cancel")
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Don't ask again"
+            let choice = alert.runModal()
+            guard choice != .alertThirdButtonReturn else { return }
+            trash = choice == .alertSecondButtonReturn
+            if alert.suppressionButton?.state == .on {
+                Settings.shared.removePolicy = trash ? RemovePolicy.trash : RemovePolicy.keep
+            }
+        }
+        library.remove(cut)
+        if trash {
+            do { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+            catch { Log.d("trash failed for \(url.lastPathComponent): \(error.localizedDescription)") }
+        }
     }
 
     @objc private func openSettings() {
@@ -189,8 +233,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupDownloadCallbacks() {
-        // Every start (drop, retry, queue advance) brings the record player up.
-        downloads.onStarted = { [weak self] _ in self?.raiseShelf() }
+        // Every start (drop, retry, queue advance) brings the record player up
+        // and stops any preview.
+        downloads.onStarted = { [weak self] _ in
+            Player.shared.stop()
+            self?.raiseShelf()
+        }
         downloads.onSettled = { [weak self] cut in
             guard let self else { return }
             self.scheduleSlideOut(after: DownloadManager.dwell(failed: cut.isFailed))
@@ -217,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - cuts:// URL scheme (automation + tests)
-    //   cuts://cut?url=<encoded YouTube URL>   cuts://collection   cuts://settings   cuts://update
+    //   cuts://cut?url=<encoded YouTube URL>   cuts://collection   cuts://settings   cuts://update   cuts://play?cut=N
 
     @objc private func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let raw = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
@@ -231,6 +279,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "collection": collection.open()
         case "settings": openSettings()
         case "update": updateYtdlp()
+        case "play": // cuts://play?cut=<number> — tests
+            if let n = comps.queryItems?.first(where: { $0.name == "cut" })?.value.flatMap(Int.init),
+               let cut = library.cuts.first(where: { $0.cutNumber == n }) {
+                collection.open()
+                Player.shared.play(cut)
+            }
         default: break
         }
     }
