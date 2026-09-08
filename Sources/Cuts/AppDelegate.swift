@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Tools.shared.prewarm()
         Notifier.shared.start()
         Notifier.shared.onActivate = { [weak self] in self?.collection.open() }
+        UpdateCheck.shared.onAvailable = { version in
+            Notifier.shared.post(title: "Cuts \(version) is out", body: "Get it from ency.world/cuts")
+        }
+        UpdateCheck.shared.start()
 
         shelf = ShelfPanel(downloads: downloads) { [weak self] url in
             self?.startCut(url)
@@ -179,6 +183,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Update yt-dlp…", action: #selector(updateYtdlp), keyEquivalent: "").target = self
+        if let version = UpdateCheck.shared.available {
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Cuts \(version) available…", action: #selector(openDownloadPage), keyEquivalent: "").target = self
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Cuts", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         // Native status-item menu positioning: assign, click, unassign.
@@ -241,6 +249,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
             catch { Log.d("trash failed for \(url.lastPathComponent): \(error.localizedDescription)") }
         }
+    }
+
+    @objc private func openDownloadPage() {
+        NSWorkspace.shared.open(UpdateCheck.downloadPage)
     }
 
     @objc private func openSettings() {
@@ -330,7 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - cuts:// URL scheme (automation + tests)
-    //   cuts://cut?url=<encoded YouTube URL>   cuts://collection   cuts://settings   cuts://update   cuts://play?cut=N
+    //   cuts://cut?url=<encoded YouTube URL>   cuts://collection   cuts://settings   cuts://update   cuts://update-check   cuts://play?cut=N
 
     @objc private func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let raw = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
@@ -344,6 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "collection": collection.open()
         case "settings": openSettings()
         case "update": updateYtdlp()
+        case "update-check": UpdateCheck.shared.checkIfDue(force: true)
         case "play": // cuts://play?cut=<number> — tests
             if let n = comps.queryItems?.first(where: { $0.name == "cut" })?.value.flatMap(Int.init),
                let cut = library.cuts.first(where: { $0.cutNumber == n }) {

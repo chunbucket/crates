@@ -1,9 +1,12 @@
 #!/bin/bash
 # Build Cuts.app from the SPM package — no Xcode project needed.
 #
-#   ./build.sh fetch     download the pinned tools into vendor/ (sha256-checked)
-#   ./build.sh           build + stage + sign → build/Cuts.app (fetches first if vendor/ is empty)
-#   ./build.sh dmg       …then package → build/Cuts-<version>.dmg
+#   ./build.sh fetch        download the pinned tools into vendor/ (sha256-checked)
+#   ./build.sh              build + stage + sign → build/Cuts.app (fetches first if vendor/ is empty)
+#   ./build.sh dmg          …then package → build/Cuts.dmg
+#   ./build.sh bump X.Y.Z   write the version into Resources/Info.plist
+#   ./build.sh release      clean tree → dmg → tag vX.Y.Z → GitHub release with the DMG attached
+#                           (UNSIGNED=1 … release --draft rehearses with an ad-hoc build as a draft)
 #
 # Signing is ad-hoc by default (runs on this Mac; other Macs need
 # System Settings › Privacy & Security › Open Anyway). For a real release:
@@ -120,25 +123,78 @@ build() {
 
 # ---------- dmg ----------
 
+# The asset name never changes, so the site can link
+# …/releases/latest/download/Cuts.dmg; the version lives in the tag and plist.
+DMG=build/Cuts.dmg
+
 dmg() {
     build
-    local stage=build/dmg out="build/Cuts-$VERSION.dmg"
-    rm -rf "$stage" "$out"
+    local stage=build/dmg
+    rm -rf "$stage" "$DMG"
     mkdir -p "$stage"
     cp -R "$APP" "$stage/"
     ln -s /Applications "$stage/Applications"
-    hdiutil create -quiet -volname Cuts -srcfolder "$stage" -ov -format UDZO "$out"
+    hdiutil create -quiet -volname Cuts -srcfolder "$stage" -ov -format UDZO "$DMG"
     rm -rf "$stage"
     if [ -n "$NOTARY_PROFILE" ] && [ "$SIGN_IDENTITY" != "-" ]; then
-        xcrun notarytool submit "$out" --keychain-profile "$NOTARY_PROFILE" --wait
-        xcrun stapler staple "$out"
+        xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+        xcrun stapler staple "$DMG"
     fi
-    echo "Packaged $out · $(du -sh "$out" | cut -f1)"
+    echo "Packaged $DMG · $(du -sh "$DMG" | cut -f1) · Cuts $VERSION"
+}
+
+# ---------- release ----------
+
+bump() {
+    [[ "${1:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: ./build.sh bump X.Y.Z"; exit 2; }
+    plutil -replace CFBundleShortVersionString -string "$1" Resources/Info.plist
+    echo "Info.plist → $1. Now describe it under '## $1' in CHANGELOG.md and commit."
+}
+
+# The CHANGELOG section for this version: from its heading to the next one.
+release_notes() {
+    awk -v v="$VERSION" '
+        $0 ~ "^## " { on = ($2 == v) ; next }
+        on { print }' CHANGELOG.md | sed -e '/./,$!d'
+}
+
+release() {
+    local draft=""
+    [ "${1:-}" = "--draft" ] && draft="--draft"
+    [ -z "$(git status --porcelain)" ] || { echo "release needs a clean tree — commit or stash first"; exit 1; }
+    if [ "$SIGN_IDENTITY" = "-" ] && [ -z "${UNSIGNED:-}" ]; then
+        echo "set SIGN_IDENTITY and NOTARY_PROFILE for a real release (see RELEASING.md),"
+        echo "or UNSIGNED=1 ./build.sh release --draft to rehearse with an ad-hoc build."
+        exit 1
+    fi
+    [ -n "$(release_notes)" ] || { echo "CHANGELOG.md has no '## $VERSION' section"; exit 1; }
+    gh release view "v$VERSION" >/dev/null 2>&1 && { echo "v$VERSION already exists on GitHub"; exit 1; }
+
+    dmg
+    if [ "$SIGN_IDENTITY" != "-" ]; then
+        spctl --assess --type open --context context:primary-signature -v "$DMG" \
+            || { echo "Gatekeeper rejects the DMG — check the notary log"; exit 1; }
+    fi
+
+    local notes; notes=$(mktemp)
+    release_notes > "$notes"
+    if [ -n "$draft" ]; then
+        # A draft is invisible and `latest` ignores it; the tag is created on publish.
+        gh release create "v$VERSION" "$DMG" --draft --target main --title "Cuts $VERSION" --notes-file "$notes"
+    else
+        git tag -a "v$VERSION" -m "Cuts $VERSION"
+        git push origin main "v$VERSION"
+        gh release create "v$VERSION" "$DMG" --title "Cuts $VERSION" --notes-file "$notes"
+    fi
+    rm -f "$notes"
+    echo "Released Cuts $VERSION${draft:+ (draft)}"
 }
 
 case "${1:-build}" in
-    fetch) fetch ;;
-    build) build ;;
-    dmg)   dmg ;;
-    *) echo "usage: ./build.sh [fetch|build|dmg]"; exit 2 ;;
+    fetch)   fetch ;;
+    build)   build ;;
+    dmg)     dmg ;;
+    bump)    bump "${2:-}" ;;
+    release) release "${2:-}" ;;
+    *) echo "usage: ./build.sh [fetch|build|dmg|bump X.Y.Z|release [--draft]]"; exit 2 ;;
 esac

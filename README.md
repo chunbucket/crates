@@ -1,28 +1,41 @@
 # Cuts
 
-Menu bar record player for YouTube → FLAC. Drag a YouTube link (Safari address
-bar, any browser, plain text) onto the shelf that slides in from the right, or
-onto the menu bar icon. The record spins while yt-dlp cuts it, then the FLAC is
-filed in your cuts folder with art, title and source URL embedded. Click the
-icon for the collection; drag any row straight into Ableton or Finder.
+A menu bar record player for the Mac that turns a YouTube link into a FLAC in
+your sample folder.
 
-## Build
+Drag a link from the address bar onto the menu bar icon, or onto the tray that
+slides in from the right. The record spins while it cuts; then the file is
+filed with the art, title and source link embedded. Click the icon for the
+shelf: play and scrub any cut, drag it straight into Ableton or Finder, retry
+one that failed.
 
-    ./build.sh          # → build/Cuts.app  (downloads pinned yt-dlp/ffmpeg/deno on first run)
-    ./build.sh dmg      # → build/Cuts-<version>.dmg
+**Apple silicon, macOS 14 or later.** Download: <https://ency.world/cuts>
 
-Swift 5.10+, macOS 14+, Apple silicon. No Xcode project; `swift run` works for
-development and falls back to Homebrew's yt-dlp/ffmpeg/deno.
+## What it talks to
 
-## Installing an unsigned build
+YouTube, to fetch the audio. GitHub, once a day, to see whether there is a
+newer version (it tells you; nothing installs itself). That is all. Nothing is
+sent anywhere.
 
-Until the app is signed with a Developer ID, macOS will refuse to open a
-downloaded copy. Once: System Settings › Privacy & Security › scroll to the
-"Cuts was blocked" line › Open Anyway.
+## Inside
+
+Swift + AppKit + SwiftUI, no Xcode project. Bundled: [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+(does the download), a static [FFmpeg](https://ffmpeg.org) (presses it to FLAC),
+and [deno](https://deno.com) (yt-dlp's JavaScript runtime for YouTube's
+challenges). See `THIRD-PARTY-LICENSES.md`.
+
+## Build from source
+
+    ./build.sh          # downloads the pinned tools into vendor/, builds build/Cuts.app
+    ./build.sh dmg      # …and packages build/Cuts.dmg
+
+Swift 5.10+. `swift run` also works for development and falls back to
+Homebrew's yt-dlp, ffmpeg and deno. Releasing is described in `RELEASING.md`.
 
 ## Where things live
 
 - Cuts folder: Settings… (default `~/Music/Cuts`)
-- Index + art + logs: `~/Library/Application Support/Cuts/`
-- Updated yt-dlp (Settings › Update): `~/Library/Application Support/Cuts/bin/`
+- Index, art, logs: `~/Library/Application Support/Cuts/`
 - Automation: `open "cuts://cut?url=<percent-encoded YouTube URL>"`
+
+MIT licensed.
