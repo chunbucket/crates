@@ -53,8 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Status item + popover
 
     /// Hand-drawn vinyl glyph. Idle: template (adapts to menu bar).
-    /// Active: dark vinyl on an amber glow disc — the "playing" state.
-    private func vinylIcon(active: Bool) -> NSImage {
+    /// Active: dark vinyl on an amber glow disc — the collection is open.
+    /// The inner groove has a lead-in gap so the disc visibly spins while a
+    /// cut is in progress (`angle`).
+    private func vinylIcon(active: Bool, angle: Double = 0) -> NSImage {
         let size = NSSize(width: 20, height: 20)
         let img = NSImage(size: size, flipped: false) { rect in
             if active {
@@ -66,9 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ring.lineWidth = 1.6
             ink.setStroke()
             ring.stroke()
-            let groove = NSBezierPath(ovalIn: rect.insetBy(dx: 6.2, dy: 6.2))
-            groove.lineWidth = 0.7
-            ink.withAlphaComponent(0.55).setStroke()
+            // Groove: a 270° arc, rotated by `angle`.
+            let groove = NSBezierPath()
+            groove.appendArc(withCenter: NSPoint(x: rect.midX, y: rect.midY), radius: rect.width / 2 - 6.2,
+                             startAngle: 90 - angle, endAngle: 90 - angle - 270, clockwise: true)
+            groove.lineWidth = 0.9
+            groove.lineCapStyle = .round
+            ink.withAlphaComponent(0.6).setStroke()
             groove.stroke()
             let dot = NSBezierPath(ovalIn: NSRect(x: rect.midX - 1.4, y: rect.midY - 1.4, width: 2.8, height: 2.8))
             ink.setFill()
@@ -77,6 +83,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         img.isTemplate = !active
         return img
+    }
+
+    // MARK: - Menu bar icon spin (while a cut is in progress)
+
+    private var iconAngle: Double = 0
+    private var iconTimer: Timer?
+    private var iconSpinning = false
+    /// Ease-out to the next rest position after the last cut lands.
+    private var iconEaseOut: (started: Date, from: Double, to: Double)?
+
+    private func refreshIcon() {
+        statusItem.button?.image = vinylIcon(active: collection.isVisible, angle: iconAngle)
+    }
+
+    private func setIconSpinning(_ on: Bool) {
+        if on {
+            iconEaseOut = nil
+            guard !iconSpinning else { return }
+            iconSpinning = true
+            if iconTimer == nil {
+                let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.tickIcon() }
+                RunLoop.main.add(t, forMode: .common)
+                iconTimer = t
+            }
+        } else if iconSpinning {
+            iconSpinning = false
+            iconEaseOut = (Date(), iconAngle, (iconAngle / 360).rounded(.up) * 360)
+        }
+    }
+
+    private func tickIcon() {
+        if iconSpinning {
+            iconAngle += 360 / 2.0 / 30 // two seconds per revolution
+        } else if let ease = iconEaseOut {
+            let p = min(1, Date().timeIntervalSince(ease.started) / 0.5)
+            iconAngle = ease.from + (ease.to - ease.from) * (1 - pow(1 - p, 3))
+            if p >= 1 {
+                iconEaseOut = nil
+                iconAngle = 0
+                iconTimer?.invalidate()
+                iconTimer = nil
+            }
+        } else {
+            iconTimer?.invalidate()
+            iconTimer = nil
+            return
+        }
+        refreshIcon()
     }
 
     private func setupStatusItem() {
@@ -113,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         collection.statusWindow = statusItem.button?.window
         collection.onVisibilityChange = { [weak self] visible in
             guard let self else { return }
-            self.statusItem.button?.image = self.vinylIcon(active: visible)
+            self.refreshIcon()
             // The row transport is the only control, so closing the shelf stops playback.
             if !visible { Player.shared.stop() }
         }
@@ -237,10 +291,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and stops any preview.
         downloads.onStarted = { [weak self] _ in
             Player.shared.stop()
+            self?.setIconSpinning(true)
             self?.raiseShelf()
         }
         downloads.onSettled = { [weak self] cut in
             guard let self else { return }
+            // Keep turning through the dwell if more links are waiting.
+            self.setIconSpinning(!self.downloads.queued.isEmpty)
             self.scheduleSlideOut(after: DownloadManager.dwell(failed: cut.isFailed))
             // The card says it when the shelf is up; otherwise the system does.
             guard !self.shelf.isVisible else { return }
