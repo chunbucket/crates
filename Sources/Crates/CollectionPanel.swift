@@ -19,7 +19,8 @@ final class CollectionPanel: NSPanel {
 
     init(library: Library, downloads: DownloadManager,
          onRetry: @escaping (Record) -> Void, onUpdateAndRetry: @escaping (Record) -> Void,
-         onRemove: @escaping (Record) -> Void, onNewCrate: @escaping (Record?) -> Void) {
+         onRemove: @escaping (Record) -> Void, onNewCrate: @escaping (Record?) -> Void,
+         onRenameCrate: @escaping (Crate) -> Void) {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 340, height: 440),
                    styleMask: [.nonactivatingPanel, .borderless],
                    backing: .buffered, defer: false)
@@ -35,7 +36,7 @@ final class CollectionPanel: NSPanel {
         let root = AnyView(
             CollectionView(library: library, downloads: downloads, nav: nav,
                            onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
-                           onRemove: onRemove, onNewCrate: onNewCrate)
+                           onRemove: onRemove, onNewCrate: onNewCrate, onRenameCrate: onRenameCrate)
                 .background(.ultraThickMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(

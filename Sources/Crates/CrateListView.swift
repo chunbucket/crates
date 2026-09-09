@@ -1,15 +1,14 @@
 import SwiftUI
 
-/// The root of the panel: All, Unsorted, then the user's crates, newest
-/// first, and a line to make a new one.
+/// The root of the panel: every crate as an icon in a three-across grid —
+/// All and Unsorted first, then the user's crates, newest first.
 struct CrateListView: View {
     @ObservedObject var library: Library
     var onOpen: (CrateFilter) -> Void
+    var onNew: () -> Void
+    var onRename: (Crate) -> Void
 
-    @State private var newName = ""
-    @State private var renaming: UUID?
-    @State private var renameText = ""
-    @FocusState private var focusedNew: Bool
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,72 +17,44 @@ struct CrateListView: View {
                     .font(.system(size: 12, weight: .heavy, design: .monospaced))
                     .kerning(2.5)
                 Spacer()
-                Text("\(library.records.count) records")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                Button(action: onNew) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(Color.primary.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("New crate")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             Divider().opacity(0.4)
 
             ScrollView {
-                LazyVStack(spacing: 0) {
-                    CrateRow(name: "All", count: library.records.count,
-                             sleeves: Array(library.records.prefix(3))) { onOpen(.all) }
-                    Divider().opacity(0.25)
-                    CrateRow(name: "Unsorted", count: library.count(in: .unsorted),
-                             sleeves: Array(library.records(in: .unsorted).prefix(3))) { onOpen(.unsorted) }
-                    Divider().opacity(0.25)
+                LazyVGrid(columns: columns, spacing: 16) {
+                    CrateTile(name: "All", count: library.records.count,
+                              sleeves: Array(library.records.prefix(3))) { onOpen(.all) }
+                    CrateTile(name: "Unsorted", count: library.count(in: .unsorted),
+                              sleeves: Array(library.records(in: .unsorted).prefix(3))) { onOpen(.unsorted) }
                     ForEach(library.crates) { crate in
-                        if renaming == crate.id {
-                            nameField(text: $renameText, placeholder: crate.name) {
-                                let name = renameText.trimmingCharacters(in: .whitespaces)
-                                if !name.isEmpty { library.renameCrate(crate.id, to: name) }
-                                renaming = nil
-                            }
-                        } else {
-                            CrateRow(name: crate.name, count: crate.recordIDs.count,
-                                     sleeves: Array(library.records(in: .crate(crate.id)).prefix(3))) { onOpen(.crate(crate.id)) }
+                        CrateTile(name: crate.name, count: crate.recordIDs.count,
+                                  sleeves: Array(library.records(in: .crate(crate.id)).prefix(3))) { onOpen(.crate(crate.id)) }
                             .contextMenu {
-                                Button("Rename…") { renameText = crate.name; renaming = crate.id }
+                                Button("Rename…") { onRename(crate) }
                                 Divider()
                                 Button("Delete Crate (records stay)") { library.deleteCrate(crate.id) }
                             }
-                        }
-                        Divider().opacity(0.25)
-                    }
-                    nameField(text: $newName, placeholder: "+ New Crate", focus: $focusedNew) {
-                        let name = newName.trimmingCharacters(in: .whitespaces)
-                        guard !name.isEmpty else { return }
-                        library.addCrate(named: name)
-                        newName = ""
                     }
                 }
+                .padding(14)
             }
         }
-        .frame(width: 340, height: 440)
-    }
-
-    private func nameField(text: Binding<String>, placeholder: String,
-                           focus: FocusState<Bool>.Binding? = nil, onCommit: @escaping () -> Void) -> some View {
-        HStack(spacing: 11) {
-            Image(systemName: "shippingbox")
-                .font(.system(size: 14))
-                .foregroundStyle(.tertiary)
-                .frame(width: 44, height: 36)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12.5, weight: .semibold))
-                .onSubmit(onCommit)
-            Spacer(minLength: 4)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
     }
 }
 
-/// A crate line: up to three of its sleeves fanned out, name, count.
-struct CrateRow: View {
+/// A crate icon with its name and count under it.
+struct CrateTile: View {
     let name: String
     let count: Int
     let sleeves: [Record]
@@ -92,38 +63,79 @@ struct CrateRow: View {
 
     var body: some View {
         Button(action: onOpen) {
-            HStack(spacing: 11) {
-                ZStack {
-                    if sleeves.isEmpty {
-                        MiniVinyl(artPath: nil).frame(width: 30, height: 30).opacity(0.5)
-                    }
-                    ForEach(Array(sleeves.enumerated()), id: \.element.id) { i, record in
-                        MiniVinyl(artPath: record.artPath)
-                            .frame(width: 30, height: 30)
-                            .offset(x: CGFloat(i) * 7 - 7)
-                            .zIndex(Double(sleeves.count - i))
-                    }
-                }
-                .frame(width: 44, height: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .lineLimit(1)
-                    Text("\(count) \(count == 1 ? "record" : "records")")
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+            VStack(spacing: 7) {
+                CrateIcon(sleeves: sleeves, size: 78)
+                    .scaleEffect(hovering ? 1.04 : 1)
+                    .animation(.spring(duration: 0.25), value: hovering)
+                Text(name)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .lineLimit(1)
+                Text("\(count) \(count == 1 ? "record" : "records")")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
-            .contentShape(Rectangle())
-            .background(hovering ? Color.primary.opacity(0.06) : .clear)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(hovering ? 0.07 : 0)))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+    }
+}
+
+/// A milk crate seen from the front, records standing in it: the first
+/// three sleeves peek out over the rim.
+struct CrateIcon: View {
+    var sleeves: [Record]
+    var size: CGFloat = 78
+    var tint: Color = Color(white: 0.30)
+
+    var body: some View {
+        let w = size, h = size
+        let boxTop = h * 0.42, boxH = h - boxTop
+        ZStack(alignment: .top) {
+            // records standing behind the front face
+            HStack(spacing: -w * 0.16) {
+                ForEach(0..<max(1, min(3, sleeves.count)), id: \.self) { i in
+                    let record = i < sleeves.count ? sleeves[i] : nil
+                    MiniVinyl(artPath: record?.artPath)
+                        .frame(width: w * 0.46, height: w * 0.46)
+                        .offset(y: CGFloat(i % 2) * 3)
+                        .opacity(record == nil ? 0.25 : 1)
+                }
+            }
+            .padding(.top, h * 0.06)
+
+            // the crate front
+            ZStack {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(LinearGradient(colors: [tint.opacity(1), tint.opacity(0.62)], startPoint: .top, endPoint: .bottom))
+                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+                // rim
+                VStack {
+                    Rectangle().fill(Color.white.opacity(0.14)).frame(height: 5)
+                    Spacer()
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                // slats
+                HStack(spacing: 0) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Spacer()
+                        Rectangle().fill(Color.black.opacity(0.28)).frame(width: 1.5)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 9)
+                // handle slot
+                Capsule().fill(Color.black.opacity(0.42)).frame(width: w * 0.30, height: 5).offset(y: -boxH * 0.20)
+            }
+            .frame(width: w, height: boxH)
+            .padding(.top, boxTop)
+            .shadow(color: .black.opacity(0.45), radius: 6, y: 3)
+        }
+        .frame(width: w, height: h)
     }
 }

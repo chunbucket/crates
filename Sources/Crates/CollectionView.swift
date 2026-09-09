@@ -10,19 +10,31 @@ struct CollectionView: View {
     var onUpdateAndRetry: (Record) -> Void
     var onRemove: (Record) -> Void
     var onNewCrate: (Record?) -> Void
+    var onRenameCrate: (Crate) -> Void
+
+    /// Push (a crate opens) slides the list in from the right and the grid
+    /// out to the left; pop reverses both.
+    private func go(_ filter: CrateFilter?) {
+        withAnimation(.easeInOut(duration: 0.28)) { nav.filter = filter }
+    }
 
     var body: some View {
-        Group {
+        ZStack {
             if let filter = nav.filter {
                 RecordListView(filter: filter, library: library, downloads: downloads,
-                               onBack: { nav.filter = nil }, onOpen: { nav.filter = $0 },
+                               onBack: { go(nil) }, onOpen: { go($0) },
                                onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
                                onRemove: onRemove, onNewCrate: onNewCrate)
+                    .transition(.move(edge: .trailing))
+                    .zIndex(1)
             } else {
-                CrateListView(library: library) { nav.filter = $0 }
+                CrateListView(library: library, onOpen: { go($0) },
+                              onNew: { onNewCrate(nil) }, onRename: onRenameCrate)
+                    .transition(.move(edge: .leading))
             }
         }
         .frame(width: 340, height: 440)
+        .clipped()
     }
 }
 
@@ -60,7 +72,9 @@ struct RecordListView: View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.4)
-            CrateStrip(library: library, current: filter, onOpen: onOpen, onNewCrate: { onNewCrate(nil) })
+            if !library.crates.isEmpty {
+                CrateStrip(library: library, current: filter, onOpen: onOpen)
+            }
             toolbar
             Divider().opacity(0.25)
             if records.isEmpty && !(filter == .all && downloads.current != nil) {
@@ -102,26 +116,33 @@ struct RecordListView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .bold))
-                    .frame(width: 18, height: 18)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                // A labelled way back, clearly a control and not part of the title.
+                Button(action: onBack) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
+                        Text("Crates").font(.system(size: 10, weight: .semibold))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(records.count) \(records.count == 1 ? "record" : "records")")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Crates")
             Text(title.uppercased())
                 .font(.system(size: 12, weight: .heavy, design: .monospaced))
                 .kerning(2.5)
                 .lineLimit(1)
-            Spacer()
-            Text("\(records.count) \(records.count == 1 ? "record" : "records")")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
     }
 
     private var toolbar: some View {
@@ -219,7 +240,6 @@ struct CrateStrip: View {
     @ObservedObject var library: Library
     var current: CrateFilter
     var onOpen: (CrateFilter) -> Void
-    var onNewCrate: () -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -230,16 +250,6 @@ struct CrateStrip: View {
                               onDropRecord: { library.add($0, to: crate.id) },
                               resolve: { url in library.records.first { $0.filePath == url.path } })
                 }
-                Button(action: onNewCrate) {
-                    Text("+")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.primary.opacity(0.06)))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("New crate")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)

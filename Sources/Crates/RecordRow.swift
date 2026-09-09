@@ -4,6 +4,31 @@ import UniformTypeIdentifiers
 extension Color {
     /// The app's accent: the menu bar disc when the crate is open, the scrubber fill.
     static let cratesAmber = Color(red: 1.0, green: 0.71, blue: 0.33)
+
+    /// The Camelot wheel's colours: green at 1 round through cyan, blue,
+    /// violet, magenta, red, orange to yellow at 12. A and B share a hue.
+    static func camelot(_ camelot: String?) -> Color {
+        guard let c = camelot, let n = Int(c.dropLast()), (1...12).contains(n) else { return .secondary }
+        let hues: [Double] = [130, 160, 185, 205, 235, 275, 305, 340, 10, 30, 45, 60]
+        return Color(hue: hues[n - 1] / 360, saturation: 0.72, brightness: 0.95)
+    }
+}
+
+/// "8B" in its wheel colour.
+struct KeyPill: View {
+    let camelot: String?
+    let name: String?
+
+    var body: some View {
+        let color = Color.camelot(camelot)
+        Text(camelot ?? "—")
+            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+            .foregroundStyle(camelot == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(color))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(Capsule().fill(color.opacity(camelot == nil ? 0.08 : 0.2)))
+            .help(name ?? "")
+    }
 }
 
 /// One record: mini vinyl · title / number · length · BPM · key. Plays and
@@ -53,26 +78,38 @@ struct RecordRow: View {
                         .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(needsRecut ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                         .lineLimit(1)
-                        .help(record.key ?? "")
                 }
             }
             Spacer(minLength: 4)
 
-            if isLoaded {
-                RowButton(symbol: isPlaying ? "pause.fill" : "play.fill",
-                          help: isPlaying ? "Pause" : "Play") { player.toggle(record) }
-                    .foregroundStyle(Color.cratesAmber)
-            } else if hovering {
-                if needsRecut {
-                    RowButton(symbol: "arrow.clockwise",
-                              help: record.isFailed ? "Retry this record" : "Record it again (file is missing)") { onRetry(record) }
-                        .foregroundStyle(.orange)
-                } else if let url = record.fileURL {
-                    RowButton(symbol: "play.fill", help: "Play") { player.play(record) }
-                    RowButton(symbol: "magnifyingglass", help: "Reveal FLAC in Finder") { reveal(url) }
+            // Trailing slot, fixed width: BPM and key columns at rest, the
+            // row's controls on hover, the transport while loaded.
+            HStack(spacing: 6) {
+                if isLoaded {
+                    RowButton(symbol: isPlaying ? "pause.fill" : "play.fill",
+                              help: isPlaying ? "Pause" : "Play") { player.toggle(record) }
+                        .foregroundStyle(Color.cratesAmber)
+                } else if hovering {
+                    if needsRecut {
+                        RowButton(symbol: "arrow.clockwise",
+                                  help: record.isFailed ? "Retry this record" : "Record it again (file is missing)") { onRetry(record) }
+                            .foregroundStyle(.orange)
+                    } else if let url = record.fileURL {
+                        RowButton(symbol: "play.fill", help: "Play") { player.play(record) }
+                        RowButton(symbol: "magnifyingglass", help: "Reveal FLAC in Finder") { reveal(url) }
+                    }
+                    RowButton(symbol: "trash", help: "Remove record…") { onRemove(record) }
+                } else if !needsRecut {
+                    Text(record.bpm.map { String(format: "%.1f", $0) } ?? "—")
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(record.bpm == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+                        .monospacedDigit()
+                        .frame(width: 36, alignment: .trailing)
+                    KeyPill(camelot: record.camelot, name: record.key)
+                        .frame(width: 34)
                 }
-                RowButton(symbol: "trash", help: "Remove record…") { onRemove(record) }
             }
+            .frame(width: 84, alignment: .trailing)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -126,11 +163,7 @@ struct RecordRow: View {
     private var subLine: String {
         if record.isFailed { return "\(record.numberLabel) · failed — \(record.error ?? "unknown error")" }
         if fileMissing { return "\(record.numberLabel) · file missing — moved or deleted?" }
-        // Once analysed: "RECORD Nº 008 · 3:41 · 132.0 · 8B" (the musical key is the tooltip).
-        if let bpm = record.bpm, let camelot = record.camelot, bpm > 0 {
-            return "\(record.numberLabel) · \(record.durationLabel) · \(String(format: "%.1f", bpm)) · \(camelot)"
-        }
-        return "\(record.numberLabel) · \(record.durationLabel) · FLAC"
+        return "\(record.numberLabel) · \(record.durationLabel)"
     }
 
     static func mmss(_ seconds: Double) -> String {

@@ -173,7 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             },
             onRemove: { [weak self] record in self?.removeRecord(record) },
-            onNewCrate: { [weak self] record in self?.newCrate(with: record) })
+            onNewCrate: { [weak self] record in self?.newCrate(with: record) },
+            onRenameCrate: { [weak self] crate in self?.renameCrate(crate) })
         collection.statusWindow = statusItem.button?.window
         collection.onVisibilityChange = { [weak self] visible in
             guard let self else { return }
@@ -213,8 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Crates
 
-    /// Ask for a name, make the crate, and file `record` in it if given.
-    private func newCrate(with record: Record?) {
+    /// The panel can't take keyboard focus (it never becomes key), so names
+    /// are asked for in a modal alert, shown above the panel.
+    private func promptName(title: String, message: String, current: String = "", button: String) -> String? {
         collection.holdOpen = true
         let level = collection.level
         collection.level = .floating
@@ -224,19 +226,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "New crate"
-        alert.informativeText = record.map { "“\($0.title)” goes in it." } ?? "Name it after the night, the set, the mood."
+        alert.messageText = title
+        alert.informativeText = message
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.placeholderString = "Crate name"
+        field.stringValue = current
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: button)
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let name = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
+        return name.isEmpty ? nil : name
+    }
+
+    /// Make a crate, and file `record` in it if given.
+    private func newCrate(with record: Record?) {
+        guard let name = promptName(title: "New crate",
+                                    message: record.map { "“\($0.title)” goes in it." } ?? "Name it after the night, the set, the mood.",
+                                    button: "Create") else { return }
         let crate = library.addCrate(named: name)
         if let record { library.add(record, to: crate.id) }
+    }
+
+    private func renameCrate(_ crate: Crate) {
+        guard let name = promptName(title: "Rename crate", message: "", current: crate.name, button: "Rename") else { return }
+        library.renameCrate(crate.id, to: name)
     }
 
     // MARK: - Removing a record
@@ -391,15 +406,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "crate":
             // crates://crate (the list) · ?name=<crate> · ?filter=all|unsorted
             let items = comps.queryItems ?? []
+            let target: CrateFilter?
             if let name = items.first(where: { $0.name == "name" })?.value,
                let crate = library.crates.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-                collection.nav.filter = .crate(crate.id)
+                target = .crate(crate.id)
             } else if let f = items.first(where: { $0.name == "filter" })?.value {
-                collection.nav.filter = f == "unsorted" ? .unsorted : .all
+                target = f == "unsorted" ? .unsorted : .all
             } else {
-                collection.nav.filter = nil
+                target = nil
             }
             collection.open()
+            withAnimation(.easeInOut(duration: 0.28)) { collection.nav.filter = target }
         case "settings": openSettings()
         case "update": updateYtdlp()
         case "update-check": UpdateCheck.shared.checkIfDue(force: true)
