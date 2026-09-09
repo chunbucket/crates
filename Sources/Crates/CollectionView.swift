@@ -158,6 +158,7 @@ struct RecordRow: View {
                         .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(needsRecut ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                         .lineLimit(1)
+                        .help(record.key ?? "")
                 }
             }
             Spacer(minLength: 4)
@@ -219,6 +220,10 @@ struct RecordRow: View {
     private var subLine: String {
         if record.isFailed { return "\(record.numberLabel) · failed — \(record.error ?? "unknown error")" }
         if fileMissing { return "\(record.numberLabel) · file missing — moved or deleted?" }
+        // Once analysed: "RECORD Nº 008 · 3:41 · 132.0 · 8B" (the musical key is the tooltip).
+        if let bpm = record.bpm, let camelot = record.camelot, bpm > 0 {
+            return "\(record.numberLabel) · \(record.durationLabel) · \(String(format: "%.1f", bpm)) · \(camelot)"
+        }
         return "\(record.numberLabel) · \(record.durationLabel) · FLAC"
     }
 

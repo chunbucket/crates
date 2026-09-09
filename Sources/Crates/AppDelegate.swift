@@ -21,6 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Notifier.shared.post(title: "Crates \(version) is out", body: "Get it from ency.world/crates")
         }
         UpdateCheck.shared.start()
+        // BPM/key for anything the current analyser hasn't seen, in the background.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self else { return }
+            AnalysisQueue.shared.backfill(self.library)
+        }
 
         shelf = ShelfPanel(downloads: downloads) { [weak self] url in
             self?.startRecord(url)
@@ -316,6 +321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         downloads.onSettled = { [weak self] record in
             guard let self else { return }
+            if !record.isFailed { AnalysisQueue.shared.enqueue(record, library: self.library) }
             // Keep turning through the dwell if more links are waiting.
             self.setIconSpinning(!self.downloads.queued.isEmpty)
             self.scheduleSlideOut(after: DownloadManager.dwell(failed: record.isFailed))
