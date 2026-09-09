@@ -122,6 +122,14 @@ final class Library: ObservableObject {
             if let file = try? decoder.decode(LibraryFile.self, from: data) {
                 records = file.records.sorted(by: Self.newestFirst)
                 crates = file.crates
+                // Art paths written by v0.2 point into the old Cuts folder.
+                let old = "/Application Support/Cuts/", new = "/Application Support/Crates/"
+                var moved = 0
+                for i in records.indices where records[i].artPath?.contains(old) == true {
+                    records[i].artPath = records[i].artPath?.replacingOccurrences(of: old, with: new)
+                    moved += 1
+                }
+                if moved > 0 { Log.d("repointed \(moved) art paths from Cuts to Crates"); save() }
             } else {
                 // v0.2: a bare array, no crates.
                 records = try decoder.decode([Record].self, from: data).sorted(by: Self.newestFirst)

@@ -1,80 +1,122 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The collection: stacked sleeve rows grouped by date.
-/// Each row: mini vinyl (art label) · title / record nº · duration · flac.
-/// Rows drag out as real files (Finder, Ableton) and reveal on hover; a
-/// failed row shows its reason and a Retry.
+/// The crate browser: the crate list at the root, a record list inside one.
 struct CollectionView: View {
     @ObservedObject var library: Library
     @ObservedObject var downloads: DownloadManager
+    @ObservedObject var nav: CrateNavigation
     var onRetry: (Record) -> Void
-    /// For a 403: refresh yt-dlp first, then re-record.
     var onUpdateAndRetry: (Record) -> Void
-    /// Remove from the shelf (owner decides about the file).
     var onRemove: (Record) -> Void
+    var onNewCrate: (Record?) -> Void
+
+    var body: some View {
+        Group {
+            if let filter = nav.filter {
+                RecordListView(filter: filter, library: library, downloads: downloads,
+                               onBack: { nav.filter = nil }, onOpen: { nav.filter = $0 },
+                               onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
+                               onRemove: onRemove, onNewCrate: onNewCrate)
+            } else {
+                CrateListView(library: library) { nav.filter = $0 }
+            }
+        }
+        .frame(width: 340, height: 440)
+    }
+}
+
+/// Where the panel is: nil = the crate list. Owned by the panel so deep links
+/// (crates://crate?name=…) can steer it.
+final class CrateNavigation: ObservableObject {
+    @Published var filter: CrateFilter?
+}
+
+/// Inside a crate: back, a strip of every crate (drop targets), the filter
+/// and sort, then the rows.
+struct RecordListView: View {
+    let filter: CrateFilter
+    @ObservedObject var library: Library
+    @ObservedObject var downloads: DownloadManager
+    var onBack: () -> Void
+    var onOpen: (CrateFilter) -> Void
+    var onRetry: (Record) -> Void
+    var onUpdateAndRetry: (Record) -> Void
+    var onRemove: (Record) -> Void
+    var onNewCrate: (Record?) -> Void
+
+    @AppStorage("recordSort") private var sort = "date"          // date | bpm | key
+    @AppStorage("recordSubfilter") private var subfilter = "all" // all | sorted | unsorted (All crate only)
+
+    private var title: String {
+        switch filter {
+        case .all: return "All"
+        case .unsorted: return "Unsorted"
+        case .crate(let id): return library.crate(id)?.name ?? "Crate"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.4)
-            if library.records.isEmpty && downloads.current == nil {
+            CrateStrip(library: library, current: filter, onOpen: onOpen, onNewCrate: { onNewCrate(nil) })
+            toolbar
+            Divider().opacity(0.25)
+            if records.isEmpty && !(filter == .all && downloads.current != nil) {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0, pinnedViews: []) {
-                        // In flight up top; once it lands (filed or failed)
-                        // the library row below takes over.
-                        if let active = downloads.inFlight {
-                            ActiveRow(record: active)
-                            Divider().opacity(0.25)
-                        }
-                        ForEach(downloads.queued) { item in
-                            QueuedRow(url: item.url)
-                            Divider().opacity(0.25)
-                        }
-                        ForEach(grouped, id: \.0) { label, records in
-                            DateHeader(label: label)
-                            ForEach(records) { record in
-                                RecordRow(record: record, onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry, onRemove: onRemove)
+                    LazyVStack(spacing: 0) {
+                        if filter == .all {
+                            if let active = downloads.inFlight {
+                                ActiveRow(record: active)
                                 Divider().opacity(0.25)
                             }
+                            ForEach(downloads.queued) { item in
+                                QueuedRow(url: item.url)
+                                Divider().opacity(0.25)
+                            }
+                        }
+                        if sort == "date" {
+                            ForEach(grouped, id: \.0) { label, group in
+                                DateHeader(label: label)
+                                ForEach(group) { row($0) }
+                            }
+                        } else {
+                            ForEach(records) { row($0) }
                         }
                     }
                 }
             }
         }
-        .frame(width: 340, height: 440)
     }
 
-    /// Records grouped by calendar day, newest first (library is already sorted).
-    /// A row being retried is represented by the ActiveRow while in flight.
-    private var grouped: [(String, [Record])] {
-        let cal = Calendar.current
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MMM d"
-        let inFlight = downloads.inFlight?.id
-        var out: [(String, [Record])] = []
-        for record in library.records where record.id != inFlight {
-            let label = cal.isDateInToday(record.date) ? "TODAY"
-                : cal.isDateInYesterday(record.date) ? "YESTERDAY"
-                : fmt.string(from: record.date).uppercased()
-            if out.last?.0 == label {
-                out[out.count - 1].1.append(record)
-            } else {
-                out.append((label, [record]))
-            }
+    private func row(_ record: Record) -> some View {
+        VStack(spacing: 0) {
+            RecordRow(record: record, library: library, filter: filter,
+                      onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
+                      onRemove: onRemove, onNewCrate: onNewCrate)
+            Divider().opacity(0.25)
         }
-        return out
     }
 
     private var header: some View {
-        HStack {
-            Text("CRATE")
+        HStack(spacing: 8) {
+            Button(action: onBack) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Crates")
+            Text(title.uppercased())
                 .font(.system(size: 12, weight: .heavy, design: .monospaced))
                 .kerning(2.5)
+                .lineLimit(1)
             Spacer()
-            Text("\(library.records.count) in the crate")
+            Text("\(records.count) \(records.count == 1 ? "record" : "records")")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
@@ -82,15 +124,49 @@ struct CollectionView: View {
         .padding(.vertical, 10)
     }
 
+    private var toolbar: some View {
+        HStack(spacing: 6) {
+            if filter == .all {
+                ForEach([("all", "All"), ("sorted", "Sorted"), ("unsorted", "Unsorted")], id: \.0) { value, label in
+                    Button(label) { subfilter = value }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .kerning(1.2)
+                        .foregroundStyle(subfilter == value ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                }
+            }
+            Spacer()
+            Menu {
+                ForEach([("date", "Date"), ("bpm", "BPM"), ("key", "Key")], id: \.0) { value, label in
+                    Button { sort = value } label: {
+                        if sort == value { Label(label, systemImage: "checkmark") } else { Text(label) }
+                    }
+                }
+            } label: {
+                Text("\(sort == "bpm" ? "BPM" : sort == "key" ? "KEY" : "DATE") ▾")
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .kerning(1.2)
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+    }
+
     private var emptyState: some View {
         VStack(spacing: 10) {
             Spacer()
-            Image(systemName: "record.circle")
+            Image(systemName: filter == .all ? "record.circle" : "shippingbox")
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(.tertiary)
-            Text("Nothing in the crate yet")
+            Text(filter == .all ? "Nothing in the crate yet" : "Nothing in this crate yet")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Drag a link onto the menu bar icon —\nthe record player will catch it.")
+            Text(filter == .all
+                 ? "Drag a link onto the menu bar icon —\nthe record player will catch it."
+                 : "Drag a record onto this crate's chip,\nor use Add to Crate in a record's menu.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -98,302 +174,113 @@ struct CollectionView: View {
         }
         .frame(maxWidth: .infinity)
     }
-}
 
-struct DateHeader: View {
-    let label: String
+    // MARK: - Which records, in what order
 
-    var body: some View {
-        HStack {
-            Text(label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .kerning(1.8)
-                .foregroundStyle(.tertiary)
-            Rectangle().fill(.tertiary.opacity(0.25)).frame(height: 1)
+    private var records: [Record] {
+        var list = library.records(in: filter)
+        if filter == .all {
+            if subfilter == "sorted" { list = list.filter { library.isSorted($0) } }
+            if subfilter == "unsorted" { list = list.filter { !library.isSorted($0) } }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 4)
+        // A record being re-recorded is represented by the ActiveRow while in flight.
+        if let inFlight = downloads.inFlight?.id { list.removeAll { $0.id == inFlight } }
+        switch sort {
+        case "bpm": return list.sorted { ($0.bpm ?? .infinity, $0.number) < ($1.bpm ?? .infinity, $1.number) }
+        case "key": return list.sorted { (Self.wheel($0.camelot), $0.number) < (Self.wheel($1.camelot), $1.number) }
+        default: return list   // library order: newest first
+        }
+    }
+
+    /// Camelot wheel order: 1A, 1B, 2A, 2B … 12B; unknown last.
+    static func wheel(_ camelot: String?) -> Int {
+        guard let c = camelot, let n = Int(c.dropLast()), let letter = c.last else { return 999 }
+        return n * 2 + (letter == "B" ? 1 : 0)
+    }
+
+    /// Records grouped by calendar day, newest first.
+    private var grouped: [(String, [Record])] {
+        let cal = Calendar.current
+        let fmt = DateFormatter()
+        fmt.dateFormat = "MMM d"
+        var out: [(String, [Record])] = []
+        for record in records {
+            let label = cal.isDateInToday(record.date) ? "TODAY"
+                : cal.isDateInYesterday(record.date) ? "YESTERDAY"
+                : fmt.string(from: record.date).uppercased()
+            if out.last?.0 == label { out[out.count - 1].1.append(record) } else { out.append((label, [record])) }
+        }
+        return out
     }
 }
 
-struct RecordRow: View {
-    let record: Record
-    var onRetry: (Record) -> Void
-    var onUpdateAndRetry: (Record) -> Void
-    var onRemove: (Record) -> Void
-    @ObservedObject private var player = Player.shared
-    @State private var hovering = false
-    /// Checked once per appearance, not per render.
-    @State private var fileMissing = false
-
-    private func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-    /// Failed, or filed but the FLAC has gone: either way the fix is a re-record.
-    private var needsRecut: Bool { record.isFailed || fileMissing }
-    private var looksLike403: Bool { record.error?.contains("403") == true }
-    /// This row is loaded in the player (playing or paused).
-    private var isLoaded: Bool { player.isCurrent(record) }
-    private var isPlaying: Bool { isLoaded && player.isPlaying }
+/// Every crate as a chip. Tap to go there; drop a record on it to file it.
+struct CrateStrip: View {
+    @ObservedObject var library: Library
+    var current: CrateFilter
+    var onOpen: (CrateFilter) -> Void
+    var onNewCrate: () -> Void
 
     var body: some View {
-        let row = HStack(spacing: 11) {
-            MiniVinyl(artPath: record.artPath, spinning: isPlaying)
-                .frame(width: 44, height: 44)
-                .opacity(needsRecut ? 0.55 : 1)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(record.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(1)
-                if isLoaded {
-                    HStack(spacing: 8) {
-                        Scrubber(time: player.time, duration: player.duration) { player.seek(to: $0) }
-                        Text("\(Self.mmss(player.time)) / \(Self.mmss(player.duration))")
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                } else {
-                    Text(subLine)
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(needsRecut ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                        .lineLimit(1)
-                        .help(record.key ?? "")
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(library.crates) { crate in
+                    CrateChip(name: crate.name, isCurrent: current == .crate(crate.id),
+                              onTap: { onOpen(.crate(crate.id)) },
+                              onDropRecord: { library.add($0, to: crate.id) },
+                              resolve: { url in library.records.first { $0.filePath == url.path } })
                 }
-            }
-            Spacer(minLength: 4)
-
-            if isLoaded {
-                // Transport stays visible while loaded, not just on hover.
-                RowButton(symbol: isPlaying ? "pause.fill" : "play.fill",
-                          help: isPlaying ? "Pause" : "Play") { player.toggle(record) }
-                    .foregroundStyle(Color.cutsAmber)
-            } else if hovering {
-                if needsRecut {
-                    Button { onRetry(record) } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.orange)
-                    .help(record.isFailed ? "Retry this record" : "Record it again (file is missing)")
-                } else if let url = record.fileURL {
-                    RowButton(symbol: "play.fill", help: "Play") { player.play(record) }
-                    RowButton(symbol: "magnifyingglass", help: "Reveal FLAC in Finder") { reveal(url) }
+                Button(action: onNewCrate) {
+                    Text("+")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.primary.opacity(0.06)))
                 }
-                RowButton(symbol: "trash", help: "Remove record…") { onRemove(record) }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("New crate")
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
-        .background(hovering ? Color.primary.opacity(0.06) : .clear)
-        .onHover { hovering = $0 }
-        .onAppear { fileMissing = !record.isFailed && !record.fileExists }
-        .contextMenu {
-            if needsRecut {
-                Button(record.isFailed ? "Retry" : "Record Again") { onRetry(record) }
-                if looksLike403 { Button("Update yt-dlp, then Retry") { onUpdateAndRetry(record) } }
-            } else if let url = record.fileURL {
-                Button("Reveal in Finder") { reveal(url) }
-            }
-            Button("Copy YouTube Link") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(record.url, forType: .string)
-            }
-            Divider()
-            Button("Remove Record…") { onRemove(record) }
-        }
-
-        // Only a record whose file is really there drags out (Finder, Ableton).
-        if let url = record.fileURL, !needsRecut {
-            row.onDrag {
-                let provider = NSItemProvider(contentsOf: url) ?? NSItemProvider()
-                provider.suggestedName = url.lastPathComponent
-                return provider
-            }
-        } else {
-            row
-        }
-    }
-
-    private var subLine: String {
-        if record.isFailed { return "\(record.numberLabel) · failed — \(record.error ?? "unknown error")" }
-        if fileMissing { return "\(record.numberLabel) · file missing — moved or deleted?" }
-        // Once analysed: "RECORD Nº 008 · 3:41 · 132.0 · 8B" (the musical key is the tooltip).
-        if let bpm = record.bpm, let camelot = record.camelot, bpm > 0 {
-            return "\(record.numberLabel) · \(record.durationLabel) · \(String(format: "%.1f", bpm)) · \(camelot)"
-        }
-        return "\(record.numberLabel) · \(record.durationLabel) · FLAC"
-    }
-
-    private static func mmss(_ seconds: Double) -> String {
-        let s = Int(seconds.rounded(.down))
-        return String(format: "%d:%02d", s / 60, s % 60)
     }
 }
 
-extension Color {
-    /// The app's accent: the menu bar disc when the collection is open, the scrubber fill.
-    static let cutsAmber = Color(red: 1.0, green: 0.71, blue: 0.33)
-}
-
-/// The 11pt symbol buttons that appear at the trailing edge of a row.
-struct RowButton: View {
-    let symbol: String
-    let help: String
-    let action: () -> Void
+struct CrateChip: View {
+    let name: String
+    let isCurrent: Bool
+    let onTap: () -> Void
+    let onDropRecord: (Record) -> Void
+    let resolve: (URL) -> Record?
+    @State private var targeted = false
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 18, height: 18)
+        Button(action: onTap) {
+            Text(name)
+                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                .kerning(0.8)
+                .lineLimit(1)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(targeted ? Color.cratesAmber.opacity(0.35)
+                                           : isCurrent ? Color.primary.opacity(0.18) : Color.primary.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(targeted ? Color.cratesAmber : .clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .help(help)
-    }
-}
-
-/// Playback position as a thin track with a knob; drag anywhere on it to seek.
-struct Scrubber: View {
-    var time: Double
-    var duration: Double
-    var onSeek: (Double) -> Void
-    @State private var dragFraction: Double?
-
-    var body: some View {
-        GeometryReader { g in
-            let width = g.size.width
-            let fraction = dragFraction ?? (duration > 0 ? time / duration : 0)
-            let x = max(0, min(width, width * fraction))
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.15)).frame(height: 3)
-                Capsule().fill(Color.cutsAmber).frame(width: x, height: 3)
-                Circle().fill(Color.primary).frame(width: 9, height: 9).offset(x: x - 4.5)
+        .foregroundStyle(isCurrent || targeted ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
+            guard let provider = providers.first else { return false }
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                guard let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                DispatchQueue.main.async {
+                    if let record = resolve(url) {
+                        onDropRecord(record)
+                        Log.d("dropped \(record.numberLabel) onto crate \(name)")
+                    }
+                }
             }
-            .frame(height: 14)
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { dragFraction = min(max($0.location.x / width, 0), 1) }
-                .onEnded {
-                    let f = min(max($0.location.x / width, 0), 1)
-                    dragFraction = nil
-                    onSeek(f * duration)
-                })
-        }
-        .frame(height: 14)
-    }
-}
-
-struct ActiveRow: View {
-    @ObservedObject var record: ActiveRecord
-
-    var body: some View {
-        HStack(spacing: 11) {
-            MiniVinyl(artPath: record.artPath)
-                .frame(width: 44, height: 44)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(record.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(1)
-                Text(statusLine)
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 4)
-            switch record.phase {
-            case .cutting(let p):
-                Text("\(Int(p * 100))%")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            case .failed:
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.orange)
-            case .done:
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            default:
-                ProgressView().controlSize(.small)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private var statusLine: String {
-        switch record.phase {
-        case .fetchingArt: return "\(record.numberLabel) · reading the sleeve…"
-        case .cutting: return "\(record.numberLabel) · recording…"
-        case .pressing: return "\(record.numberLabel) · pressing to flac…"
-        case .done: return "\(record.numberLabel) · filed ✓"
-        case .failed(let e): return "failed — \(e)"
-        }
-    }
-}
-
-/// A link waiting its turn behind the current record.
-struct QueuedRow: View {
-    let url: String
-
-    var body: some View {
-        HStack(spacing: 11) {
-            MiniVinyl(artPath: nil)
-                .frame(width: 44, height: 44)
-                .opacity(0.5)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(YouTubeURL.display(url))
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Text("queued · up next")
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer(minLength: 4)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-}
-
-struct MiniVinyl: View {
-    var artPath: String?
-    var spinning = false
-    @State private var angle: Double = 0
-
-    var body: some View {
-        ZStack {
-            Circle().fill(Color(white: 0.10))
-            Circle()
-                .strokeBorder(Color(white: 0.22), lineWidth: 1)
-                .padding(2.5)
-            artImage
-                .clipShape(Circle())
-                .padding(9)
-            Circle().fill(Color(white: 0.10)).frame(width: 3.5, height: 3.5)
-        }
-        .rotationEffect(.degrees(angle))
-        .onAppear { if spinning { spin() } }
-        .onChange(of: spinning) { _, now in
-            if now { spin() } else { withAnimation(.easeOut(duration: 0.6)) { angle = angle.truncatingRemainder(dividingBy: 360) } }
-        }
-    }
-
-    private func spin() {
-        angle = 0
-        withAnimation(.linear(duration: 3.2).repeatForever(autoreverses: false)) { angle = 360 }
-    }
-
-    @ViewBuilder
-    private var artImage: some View {
-        if let p = artPath, let img = NSImage(contentsOfFile: p) {
-            Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
-        } else {
-            Color(white: 0.25)
+            return true
         }
     }
 }

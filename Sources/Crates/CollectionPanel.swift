@@ -15,9 +15,11 @@ final class CollectionPanel: NSPanel {
     /// don't close the panel behind it.
     var holdOpen = false
 
+    let nav = CrateNavigation()
+
     init(library: Library, downloads: DownloadManager,
          onRetry: @escaping (Record) -> Void, onUpdateAndRetry: @escaping (Record) -> Void,
-         onRemove: @escaping (Record) -> Void) {
+         onRemove: @escaping (Record) -> Void, onNewCrate: @escaping (Record?) -> Void) {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 340, height: 440),
                    styleMask: [.nonactivatingPanel, .borderless],
                    backing: .buffered, defer: false)
@@ -31,8 +33,9 @@ final class CollectionPanel: NSPanel {
         animationBehavior = .none
 
         let root = AnyView(
-            CollectionView(library: library, downloads: downloads,
-                           onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry, onRemove: onRemove)
+            CollectionView(library: library, downloads: downloads, nav: nav,
+                           onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
+                           onRemove: onRemove, onNewCrate: onNewCrate)
                 .background(.ultraThickMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(

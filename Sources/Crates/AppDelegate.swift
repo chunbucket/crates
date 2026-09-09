@@ -172,7 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.startRecord(record.url)
                 }
             },
-            onRemove: { [weak self] record in self?.removeRecord(record) })
+            onRemove: { [weak self] record in self?.removeRecord(record) },
+            onNewCrate: { [weak self] record in self?.newCrate(with: record) })
         collection.statusWindow = statusItem.button?.window
         collection.onVisibilityChange = { [weak self] visible in
             guard let self else { return }
@@ -208,6 +209,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         startRecord(url)
+    }
+
+    // MARK: - Crates
+
+    /// Ask for a name, make the crate, and file `record` in it if given.
+    private func newCrate(with record: Record?) {
+        collection.holdOpen = true
+        let level = collection.level
+        collection.level = .floating
+        defer {
+            collection.holdOpen = false
+            collection.level = level
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "New crate"
+        alert.informativeText = record.map { "“\($0.title)” goes in it." } ?? "Name it after the night, the set, the mood."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Crate name"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        let crate = library.addCrate(named: name)
+        if let record { library.add(record, to: crate.id) }
     }
 
     // MARK: - Removing a record
@@ -348,7 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - records:// URL scheme (automation + tests)
-    //   crates://record?url=<encoded link>   crates://crate   crates://settings   crates://update   crates://update-check   crates://play?record=N
+    //   crates://record?url=<encoded link>   crates://crate[?name=…|?filter=all|unsorted]   crates://settings   crates://update   crates://update-check   crates://play?record=N
 
     @objc private func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let raw = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
@@ -359,7 +388,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let url = YouTubeURL.extract(from: encoded) {
                 startRecord(url)
             }
-        case "crate": collection.open()
+        case "crate":
+            // crates://crate (the list) · ?name=<crate> · ?filter=all|unsorted
+            let items = comps.queryItems ?? []
+            if let name = items.first(where: { $0.name == "name" })?.value,
+               let crate = library.crates.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+                collection.nav.filter = .crate(crate.id)
+            } else if let f = items.first(where: { $0.name == "filter" })?.value {
+                collection.nav.filter = f == "unsorted" ? .unsorted : .all
+            } else {
+                collection.nav.filter = nil
+            }
+            collection.open()
         case "settings": openSettings()
         case "update": updateYtdlp()
         case "update-check": UpdateCheck.shared.checkIfDue(force: true)
