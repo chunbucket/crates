@@ -1,4 +1,4 @@
-# Releasing Cuts
+# Releasing Crates
 
 One-time setup (needs a paid Apple Developer account):
 
@@ -17,10 +17,10 @@ git commit -am "0.3.1"
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=cuts ./build.sh release
 ```
 
-`release` refuses a dirty tree, builds and notarizes `build/Cuts.dmg`, checks
+`release` refuses a dirty tree, builds and notarizes `build/Crates.dmg`, checks
 Gatekeeper accepts it, tags `v0.3.1`, pushes, and publishes a GitHub release
 with the DMG attached and the CHANGELOG section as notes. The download link on
-the site never changes: `…/releases/latest/download/Cuts.dmg`.
+the site never changes: `…/releases/latest/download/Crates.dmg`.
 
 Rehearsal without a certificate: `UNSIGNED=1 ./build.sh release --draft` makes
 a draft release (invisible; `latest` ignores drafts) you can inspect and delete.

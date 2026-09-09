@@ -1,9 +1,9 @@
 import Foundation
 
-/// Tiny append-only debug log: ~/Library/Application Support/Cuts/debug.log
+/// Tiny append-only debug log: ~/Library/Application Support/Crates/debug.log
 enum Log {
     private static let url = Library.supportDir.appendingPathComponent("debug.log")
-    private static let queue = DispatchQueue(label: "cuts.log")
+    private static let queue = DispatchQueue(label: "records.log")
     private static let stamp: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"

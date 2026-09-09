@@ -1,7 +1,7 @@
 import AppKit
 import UserNotifications
 
-/// System notifications for cuts that finish while the shelf is put away.
+/// System notifications for records that finish while the shelf is put away.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
     /// Tapping a notification.

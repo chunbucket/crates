@@ -6,8 +6,8 @@ import Foundation
 final class UpdateCheck: ObservableObject {
     static let shared = UpdateCheck()
 
-    static let repo = ProcessInfo.processInfo.environment["CUTS_UPDATE_REPO"] ?? "chunbucket/cuts"
-    static let downloadPage = URL(string: "https://ency.world/cuts")!
+    static let repo = ProcessInfo.processInfo.environment["CRATES_UPDATE_REPO"] ?? "chunbucket/crates"
+    static let downloadPage = URL(string: "https://ency.world/crates")!
     private static let stampKey = "lastUpdateCheck"
     private static let notifiedKey = "lastNotifiedVersion"
 
@@ -34,7 +34,7 @@ final class UpdateCheck: ObservableObject {
         guard mine != "dev" else { return }
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("Cuts/\(mine)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Crates/\(mine)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
             guard let data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

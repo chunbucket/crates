@@ -5,7 +5,7 @@ import AVFoundation
 final class Player: NSObject, ObservableObject, AVAudioPlayerDelegate {
     static let shared = Player()
 
-    @Published private(set) var cutID: UUID?
+    @Published private(set) var recordID: UUID?
     @Published private(set) var isPlaying = false
     @Published private(set) var time: Double = 0
     private(set) var duration: Double = 0
@@ -13,24 +13,24 @@ final class Player: NSObject, ObservableObject, AVAudioPlayerDelegate {
     private var player: AVAudioPlayer?
     private var timer: Timer?
 
-    func isCurrent(_ cut: Cut) -> Bool { cutID == cut.id }
+    func isCurrent(_ record: Record) -> Bool { recordID == record.id }
 
-    /// Play from the start, or resume if this cut is already loaded.
-    func play(_ cut: Cut) {
-        if isCurrent(cut), let player {
+    /// Play from the start, or resume if this record is already loaded.
+    func play(_ record: Record) {
+        if isCurrent(record), let player {
             player.play()
             isPlaying = true
             startTimer()
             return
         }
         stop()
-        guard let url = cut.fileURL else { return }
+        guard let url = record.fileURL else { return }
         do {
             let p = try AVAudioPlayer(contentsOf: url)
             p.delegate = self
             p.prepareToPlay()
             player = p
-            cutID = cut.id
+            recordID = record.id
             duration = p.duration
             time = 0
             p.play()
@@ -47,8 +47,8 @@ final class Player: NSObject, ObservableObject, AVAudioPlayerDelegate {
         timer?.invalidate()
     }
 
-    func toggle(_ cut: Cut) {
-        if isCurrent(cut) && isPlaying { pause() } else { play(cut) }
+    func toggle(_ record: Record) {
+        if isCurrent(record) && isPlaying { pause() } else { play(record) }
     }
 
     func seek(to seconds: Double) {
@@ -60,15 +60,15 @@ final class Player: NSObject, ObservableObject, AVAudioPlayerDelegate {
     func stop() {
         player?.stop()
         player = nil
-        cutID = nil
+        recordID = nil
         isPlaying = false
         time = 0
         duration = 0
         timer?.invalidate()
     }
 
-    func stopIfCurrent(_ cut: Cut) {
-        if isCurrent(cut) { stop() }
+    func stopIfCurrent(_ record: Record) {
+        if isCurrent(record) { stop() }
     }
 
     private func startTimer() {

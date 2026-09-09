@@ -1,4 +1,4 @@
-// Renders Resources/Cuts.icns (+ a 512px preview) from code, so the icon
+// Renders Resources/Crates.icns (+ a 512px preview) from code, so the icon
 // stays in step with the app's vinyl glyph. Run: swift Resources/icon/make-icon.swift
 import AppKit
 
@@ -80,7 +80,7 @@ func png(_ image: NSImage, pixels: Int) -> Data {
 }
 
 let out = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "Resources")
-let iconset = out.appendingPathComponent("Cuts.iconset")
+let iconset = out.appendingPathComponent("Crates.iconset")
 try? FileManager.default.removeItem(at: iconset)
 try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 for base in [16, 32, 128, 256, 512] {
@@ -93,7 +93,7 @@ for base in [16, 32, 128, 256, 512] {
 try png(draw(size: 512), pixels: 512).write(to: out.appendingPathComponent("icon/preview-512.png"))
 let p = Process()
 p.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-p.arguments = ["-c", "icns", iconset.path, "-o", out.appendingPathComponent("Cuts.icns").path]
+p.arguments = ["-c", "icns", iconset.path, "-o", out.appendingPathComponent("Crates.icns").path]
 try p.run(); p.waitUntilExit()
 try? FileManager.default.removeItem(at: iconset)
-print(p.terminationStatus == 0 ? "wrote \(out.path)/Cuts.icns" : "iconutil failed")
+print(p.terminationStatus == 0 ? "wrote \(out.path)/Crates.icns" : "iconutil failed")

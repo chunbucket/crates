@@ -16,8 +16,8 @@ final class CollectionPanel: NSPanel {
     var holdOpen = false
 
     init(library: Library, downloads: DownloadManager,
-         onRetry: @escaping (Cut) -> Void, onUpdateAndRetry: @escaping (Cut) -> Void,
-         onRemove: @escaping (Cut) -> Void) {
+         onRetry: @escaping (Record) -> Void, onUpdateAndRetry: @escaping (Record) -> Void,
+         onRemove: @escaping (Record) -> Void) {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 340, height: 440),
                    styleMask: [.nonactivatingPanel, .borderless],
                    backing: .buffered, defer: false)

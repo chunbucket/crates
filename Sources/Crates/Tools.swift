@@ -6,16 +6,16 @@ struct ToolError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// The command-line tools Cuts shells out to, and where they live.
+/// The command-line tools Crates shells out to, and where they live.
 ///
 /// Inside a built bundle (staged by build.sh):
-///   Cuts.app/Contents/MacOS/ffmpeg
-///   Cuts.app/Contents/MacOS/deno                             (yt-dlp's JS runtime — QuickJS was
+///   Crates.app/Contents/MacOS/ffmpeg
+///   Crates.app/Contents/MacOS/deno                             (yt-dlp's JS runtime — QuickJS was
 ///                                                             tried: minutes per challenge vs ~2 s)
-///   Cuts.app/Contents/Resources/yt-dlp_macos/yt-dlp_macos    (+ _internal/, PyInstaller onedir;
+///   Crates.app/Contents/Resources/yt-dlp_macos/yt-dlp_macos    (+ _internal/, PyInstaller onedir;
 ///                                                             under Resources because the tree mixes code and data)
 ///
-/// yt-dlp updates are downloaded to ~/Library/Application Support/Cuts/bin
+/// yt-dlp updates are downloaded to ~/Library/Application Support/Crates/bin
 /// and win over the bundled copy while they are newer, so the signed bundle
 /// is never modified. Outside a bundle (plain `swift run`) everything falls
 /// back to Homebrew so the dev loop keeps working.
@@ -59,7 +59,7 @@ final class Tools: ObservableObject {
     private static func resolveYtdlp(bundled: Bool) -> (URL, String) {
         guard bundled else { return (homebrew.appendingPathComponent("yt-dlp"), "homebrew") }
         let fm = FileManager.default
-        let bundledVersion = Bundle.main.infoDictionary?["CutsBundledYtdlp"] as? String ?? ""
+        let bundledVersion = Bundle.main.infoDictionary?["CratesBundledYtdlp"] as? String ?? ""
         let updated = updatedYtdlpDir.appendingPathComponent("yt-dlp_macos")
         let updatedVersion = (try? String(contentsOf: updatedVersionFile, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -80,7 +80,7 @@ final class Tools: ObservableObject {
 
     /// macOS verifies every freshly installed Mach-O the first time it runs
     /// (about 7 s for yt-dlp's hundred-odd dylibs). Pay that at app launch,
-    /// in the background, instead of on the first cut.
+    /// in the background, instead of on the first record.
     func prewarm() {
         guard isBundled else { return }
         let exe = ytdlp

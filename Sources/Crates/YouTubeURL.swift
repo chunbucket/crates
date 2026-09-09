@@ -4,7 +4,7 @@ enum YouTubeURL {
     /// Canonical watch URL for the first YouTube video found in `raw`.
     /// `raw` may be a full URL, a scheme-less one, or text with a URL inside.
     /// Canonical form drops playlist/radio/tracking params so yt-dlp skips the
-    /// playlist extractor and the same video always dedupes to one cut.
+    /// playlist extractor and the same video always dedupes to one record.
     static func extract(from raw: String) -> String? {
         videoID(in: raw).map(canonical)
     }

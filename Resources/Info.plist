@@ -3,15 +3,15 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Cuts</string>
+	<string>Crates</string>
 	<key>CFBundleExecutable</key>
-	<string>Cuts</string>
+	<string>Crates</string>
 	<key>CFBundleIconFile</key>
-	<string>Cuts</string>
+	<string>Crates</string>
 	<key>CFBundleIdentifier</key>
-	<string>me.ency.cuts</string>
+	<string>me.ency.crates</string>
 	<key>CFBundleName</key>
-	<string>Cuts</string>
+	<string>Crates</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -20,16 +20,16 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>me.ency.cuts.url</string>
+			<string>me.ency.crates.url</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>cuts</string>
+				<string>crates</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>CutsBundledYtdlp</key>
+	<key>CratesBundledYtdlp</key>
 	<string>dev</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>

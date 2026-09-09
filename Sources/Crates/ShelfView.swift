@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Content of the slide-in shelf panel: a drop target that becomes the
-/// record player while a cut is in progress. Drops are accepted by the
+/// record player while a record is in progress. Drops are accepted by the
 /// AppKit DropCatcherView underneath; this view only renders. Its size is
 /// read by the hosting view (SizeReportingHostingView), not reported from here.
 struct ShelfView: View {
@@ -16,8 +16,8 @@ struct ShelfView: View {
 
     var body: some View {
         Group {
-            if let cut = downloads.current {
-                PlayerCard(cut: cut, queuedCount: downloads.queued.count)
+            if let record = downloads.current {
+                PlayerCard(record: record, queuedCount: downloads.queued.count)
             } else {
                 dropTarget
             }
@@ -47,7 +47,7 @@ struct ShelfView: View {
             .buttonStyle(.plain)
             .onHover { closeHover = $0 }
             .padding(8)
-            .help("Put the shelf away (download keeps running)")
+            .help("Put the tray away (recording keeps running)")
         }
         // Always the ideal size, even while the panel is still animating to it.
         .fixedSize()
@@ -68,7 +68,7 @@ struct ShelfView: View {
             .scaleEffect(dropHover ? 1.06 : 1.0)
             .animation(.spring(duration: 0.25), value: dropHover)
 
-            Text(state.notice ?? "drop to cut")
+            Text(state.notice ?? "drop to record")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.65))
                 .multilineTextAlignment(.center)
@@ -80,7 +80,7 @@ struct ShelfView: View {
 
 /// The record player while cutting: vinyl + corner mark + title + status.
 struct PlayerCard: View {
-    @ObservedObject var cut: ActiveCut
+    @ObservedObject var record: ActiveRecord
     var queuedCount: Int = 0
 
     var body: some View {
@@ -88,29 +88,29 @@ struct PlayerCard: View {
             HStack(alignment: .top) {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text(cut.cutLabel)
-                    Text(cut.dateLabel)
+                    Text(record.numberLabel)
+                    Text(record.dateLabel)
                 }
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .kerning(1.2)
                 .foregroundStyle(.white.opacity(0.55))
             }
 
-            VinylView(artPath: cut.artPath,
+            VinylView(artPath: record.artPath,
                       progress: progressValue,
                       spinning: isSpinning)
                 .frame(width: 176, height: 176)
                 .shadow(color: .black.opacity(0.5), radius: 12, y: 6)
 
             VStack(spacing: 3) {
-                Text(cut.title)
+                Text(record.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.92))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                 Text(statusLine)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(cut.phase.isFailed ? .orange.opacity(0.9) : .white.opacity(0.5))
+                    .foregroundStyle(record.phase.isFailed ? .orange.opacity(0.9) : .white.opacity(0.5))
                     .lineLimit(3)
                     .multilineTextAlignment(.center)
                 if queuedCount > 0 {
@@ -123,7 +123,7 @@ struct PlayerCard: View {
     }
 
     private var progressValue: Double? {
-        switch cut.phase {
+        switch record.phase {
         case .fetchingArt: return 0
         case .cutting(let p): return p
         case .pressing, .done: return 1
@@ -131,15 +131,15 @@ struct PlayerCard: View {
         }
     }
 
-    private var isSpinning: Bool { !cut.phase.isTerminal }
+    private var isSpinning: Bool { !record.phase.isTerminal }
 
     private var statusLine: String {
-        switch cut.phase {
+        switch record.phase {
         case .fetchingArt: return "reading the sleeve…"
-        case .cutting(let p): return String(format: "cutting… %d%%", Int(p * 100))
+        case .cutting(let p): return String(format: "recording… %d%%", Int(p * 100))
         case .pressing: return "pressing to flac…"
         case .done: return "filed ✓"
-        case .failed(let why): return "cut failed — \(why)"
+        case .failed(let why): return "recording failed — \(why)"
         }
     }
 }

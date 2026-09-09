@@ -4,7 +4,7 @@ import SwiftUI
 /// Shelf UI state shared between AppKit (drop catcher, panel) and SwiftUI.
 final class ShelfState: ObservableObject {
     @Published var hovering = false
-    /// Copy shown on the idle card in place of "drop to cut" (e.g. a duplicate notice).
+    /// Copy shown on the idle card in place of "drop to record" (e.g. a duplicate notice).
     @Published var notice: String?
 }
 

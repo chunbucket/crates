@@ -1,9 +1,9 @@
 #!/bin/bash
-# Build Cuts.app from the SPM package — no Xcode project needed.
+# Build Crates.app from the SPM package — no Xcode project needed.
 #
 #   ./build.sh fetch        download the pinned tools into vendor/ (sha256-checked)
-#   ./build.sh              build + stage + sign → build/Cuts.app (fetches first if vendor/ is empty)
-#   ./build.sh dmg          …then package → build/Cuts.dmg
+#   ./build.sh              build + stage + sign → build/Crates.app (fetches first if vendor/ is empty)
+#   ./build.sh dmg          …then package → build/Crates.dmg
 #   ./build.sh bump X.Y.Z   write the version into Resources/Info.plist
 #   ./build.sh release      clean tree → dmg → tag vX.Y.Z → GitHub release with the DMG attached
 #                           (UNSIGNED=1 … release --draft rehearses with an ad-hoc build as a draft)
@@ -17,7 +17,7 @@ cd "$(dirname "$0")"
 source vendor.env
 
 VERSION=$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)
-APP=build/Cuts.app
+APP=build/Crates.app
 BIN="$APP/Contents/MacOS"
 # yt-dlp's onedir tree mixes dylibs with zips/.py files. codesign treats
 # everything under MacOS/ as code, so the tree lives under Resources/ (sealed
@@ -92,15 +92,15 @@ build() {
     [ -x vendor/yt-dlp_macos/yt-dlp_macos ] && [ -x vendor/ffmpeg ] && [ -x vendor/deno ] || fetch
 
     swift build -c release
-    lipo -info .build/release/Cuts | grep -q arm64 || { echo "expected an arm64 build"; exit 1; }
+    lipo -info .build/release/Crates | grep -q arm64 || { echo "expected an arm64 build"; exit 1; }
 
     rm -rf "$APP"
     mkdir -p "$BIN" "$APP/Contents/Resources"
-    cp .build/release/Cuts "$BIN/Cuts"
+    cp .build/release/Crates "$BIN/Crates"
     cp Resources/Info.plist "$APP/Contents/Info.plist"
     plutil -replace CFBundleVersion -string "$(git rev-list --count HEAD)" "$APP/Contents/Info.plist"
-    plutil -replace CutsBundledYtdlp -string "$YTDLP_VERSION" "$APP/Contents/Info.plist"
-    cp THIRD-PARTY-LICENSES.md Resources/Cuts.icns "$APP/Contents/Resources/"
+    plutil -replace CratesBundledYtdlp -string "$YTDLP_VERSION" "$APP/Contents/Info.plist"
+    cp THIRD-PARTY-LICENSES.md Resources/Crates.icns "$APP/Contents/Resources/"
 
     cp -R vendor/yt-dlp_macos "$YTDLP"
     cp vendor/ffmpeg vendor/deno "$BIN/"
@@ -124,8 +124,8 @@ build() {
 # ---------- dmg ----------
 
 # The asset name never changes, so the site can link
-# …/releases/latest/download/Cuts.dmg; the version lives in the tag and plist.
-DMG=build/Cuts.dmg
+# …/releases/latest/download/Crates.dmg; the version lives in the tag and plist.
+DMG=build/Crates.dmg
 
 dmg() {
     build
@@ -134,13 +134,13 @@ dmg() {
     mkdir -p "$stage"
     cp -R "$APP" "$stage/"
     ln -s /Applications "$stage/Applications"
-    hdiutil create -quiet -volname Cuts -srcfolder "$stage" -ov -format UDZO "$DMG"
+    hdiutil create -quiet -volname Crates -srcfolder "$stage" -ov -format UDZO "$DMG"
     rm -rf "$stage"
     if [ -n "$NOTARY_PROFILE" ] && [ "$SIGN_IDENTITY" != "-" ]; then
         xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
         xcrun stapler staple "$DMG"
     fi
-    echo "Packaged $DMG · $(du -sh "$DMG" | cut -f1) · Cuts $VERSION"
+    echo "Packaged $DMG · $(du -sh "$DMG" | cut -f1) · Crates $VERSION"
 }
 
 # ---------- release ----------
@@ -180,14 +180,14 @@ release() {
     release_notes > "$notes"
     if [ -n "$draft" ]; then
         # A draft is invisible and `latest` ignores it; the tag is created on publish.
-        gh release create "v$VERSION" "$DMG" --draft --target main --title "Cuts $VERSION" --notes-file "$notes"
+        gh release create "v$VERSION" "$DMG" --draft --target main --title "Crates $VERSION" --notes-file "$notes"
     else
-        git tag -a "v$VERSION" -m "Cuts $VERSION"
+        git tag -a "v$VERSION" -m "Crates $VERSION"
         git push origin main "v$VERSION"
-        gh release create "v$VERSION" "$DMG" --title "Cuts $VERSION" --notes-file "$notes"
+        gh release create "v$VERSION" "$DMG" --title "Crates $VERSION" --notes-file "$notes"
     fi
     rm -f "$notes"
-    echo "Released Cuts $VERSION${draft:+ (draft)}"
+    echo "Released Crates $VERSION${draft:+ (draft)}"
 }
 
 case "${1:-build}" in

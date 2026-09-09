@@ -18,12 +18,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.shared.start()
         Notifier.shared.onActivate = { [weak self] in self?.collection.open() }
         UpdateCheck.shared.onAvailable = { version in
-            Notifier.shared.post(title: "Cuts \(version) is out", body: "Get it from ency.world/cuts")
+            Notifier.shared.post(title: "Crates \(version) is out", body: "Get it from ency.world/crates")
         }
         UpdateCheck.shared.start()
 
         shelf = ShelfPanel(downloads: downloads) { [weak self] url in
-            self?.startCut(url)
+            self?.startRecord(url)
         }
         shelf.onHidden = { [weak self] in
             self?.downloads.dismissResult()
@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // a new user sees where things go and how to drop a link.
         if !UserDefaults.standard.bool(forKey: "hasLaunched") {
             UserDefaults.standard.set(true, forKey: "hasLaunched")
-            if library.cuts.isEmpty {
+            if library.records.isEmpty {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.collection.open() }
             }
         }
@@ -59,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Hand-drawn vinyl glyph. Idle: template (adapts to menu bar).
     /// Active: dark vinyl on an amber glow disc — the collection is open.
     /// The inner groove has a lead-in gap so the disc visibly spins while a
-    /// cut is in progress (`angle`).
+    /// record is in progress (`angle`).
     private func vinylIcon(active: Bool, angle: Double = 0) -> NSImage {
         let size = NSSize(width: 20, height: 20)
         let img = NSImage(size: size, flipped: false) { rect in
@@ -89,12 +89,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return img
     }
 
-    // MARK: - Menu bar icon spin (while a cut is in progress)
+    // MARK: - Menu bar icon spin (while a record is in progress)
 
     private var iconAngle: Double = 0
     private var iconTimer: Timer?
     private var iconSpinning = false
-    /// Ease-out to the next rest position after the last cut lands.
+    /// Ease-out to the next rest position after the last record lands.
     private var iconEaseOut: (started: Date, from: Double, to: Double)?
 
     private func refreshIcon() {
@@ -148,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.autoresizingMask = [.width, .height]
             overlay.onURLDrop = { [weak self] url in
                 Log.d("status item drop: \(url)")
-                self?.startCut(url)
+                self?.startRecord(url)
             }
             overlay.onLeftClick = { [weak self] in self?.collection.toggle() }
             overlay.onRightClick = { [weak self] in self?.showMenu() }
@@ -156,18 +156,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         collection = CollectionPanel(
             library: library, downloads: downloads,
-            onRetry: { [weak self] cut in
-                self?.startCut(cut.url) // a retry is just the same link again; enqueue lands it in its row
+            onRetry: { [weak self] record in
+                self?.startRecord(record.url) // a retry is just the same link again; enqueue lands it in its row
             },
-            onUpdateAndRetry: { [weak self] cut in
+            onUpdateAndRetry: { [weak self] record in
                 Tools.shared.updateYtdlp { result in
                     if case .failure(let error) = result {
                         Notifier.shared.post(title: "yt-dlp update failed", body: error.localizedDescription)
                     }
-                    self?.startCut(cut.url)
+                    self?.startRecord(record.url)
                 }
             },
-            onRemove: { [weak self] cut in self?.removeCut(cut) })
+            onRemove: { [weak self] record in self?.removeRecord(record) })
         collection.statusWindow = statusItem.button?.window
         collection.onVisibilityChange = { [weak self] visible in
             guard let self else { return }
@@ -179,41 +179,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showMenu() {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Cut from Clipboard Link", action: #selector(cutFromClipboard), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Record from Clipboard Link", action: #selector(recordFromClipboard), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Update yt-dlp…", action: #selector(updateYtdlp), keyEquivalent: "").target = self
         if let version = UpdateCheck.shared.available {
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Cuts \(version) available…", action: #selector(openDownloadPage), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Crates \(version) available…", action: #selector(openDownloadPage), keyEquivalent: "").target = self
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Cuts", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Crates", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         // Native status-item menu positioning: assign, click, unassign.
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         DispatchQueue.main.async { [weak self] in self?.statusItem.menu = nil }
     }
 
-    @objc private func cutFromClipboard() {
+    @objc private func recordFromClipboard() {
         // Same reader as drops: handles plain text, public.url and Safari's
         // plist flavors, and scheme-less / embedded URLs.
         guard let url = DragMonitor.youtubeURL(on: NSPasteboard.general) else {
             NSSound.beep()
             return
         }
-        startCut(url)
+        startRecord(url)
     }
 
-    // MARK: - Removing a cut
+    // MARK: - Removing a record
 
     /// Take the row off the shelf; ask (once, unless told not to) whether the
     /// FLAC goes to the Trash with it. Failed / missing-file rows have no file
     /// to ask about.
-    private func removeCut(_ cut: Cut) {
-        Player.shared.stopIfCurrent(cut)
-        guard cut.fileExists, let url = cut.fileURL else {
-            library.remove(cut)
+    private func removeRecord(_ record: Record) {
+        Player.shared.stopIfCurrent(record)
+        guard record.fileExists, let url = record.fileURL else {
+            library.remove(record)
             return
         }
         var trash = Settings.shared.removePolicy == RemovePolicy.trash
@@ -230,8 +230,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
-            alert.messageText = "Remove “\(cut.title)” from the shelf?"
-            alert.informativeText = "The FLAC can stay in your cuts folder, or go to the Trash with it."
+            alert.messageText = "Remove “\(record.title)” from the crate?"
+            alert.informativeText = "The FLAC can stay in your records folder, or go to the Trash with it."
             alert.addButton(withTitle: "Remove, Keep File")
             alert.addButton(withTitle: "Remove & Trash File")
             alert.addButton(withTitle: "Cancel")
@@ -244,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Settings.shared.removePolicy = trash ? RemovePolicy.trash : RemovePolicy.keep
             }
         }
-        library.remove(cut)
+        library.remove(record)
         if trash {
             do { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
             catch { Log.d("trash failed for \(url.lastPathComponent): \(error.localizedDescription)") }
@@ -272,8 +272,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Downloads
 
-    /// Every cut enters here (drop, clipboard, URL scheme, row retry).
-    private func startCut(_ url: String) {
+    /// Every record enters here (drop, clipboard, URL scheme, row retry).
+    private func startRecord(_ url: String) {
         switch downloads.enqueue(url) {
         case .started:
             break // onStarted raised the shelf
@@ -281,7 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             raiseShelf()
         case .duplicate(let existing):
             downloads.dismissResult()
-            shelf.slideIn(notice: "already on the shelf · \(existing.cutLabel)")
+            shelf.slideIn(notice: "already in the crate · \(existing.numberLabel)")
             scheduleSlideOut(after: 2.2)
         case .rejected:
             NSSound.beep()
@@ -314,15 +314,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.setIconSpinning(true)
             self?.raiseShelf()
         }
-        downloads.onSettled = { [weak self] cut in
+        downloads.onSettled = { [weak self] record in
             guard let self else { return }
             // Keep turning through the dwell if more links are waiting.
             self.setIconSpinning(!self.downloads.queued.isEmpty)
-            self.scheduleSlideOut(after: DownloadManager.dwell(failed: cut.isFailed))
+            self.scheduleSlideOut(after: DownloadManager.dwell(failed: record.isFailed))
             // The card says it when the shelf is up; otherwise the system does.
             guard !self.shelf.isVisible else { return }
-            Notifier.shared.post(title: cut.isFailed ? "Cut failed · \(cut.title)" : "Filed · \(cut.title)",
-                                 body: cut.isFailed ? (cut.error ?? "unknown error") : cut.cutLabel)
+            Notifier.shared.post(title: record.isFailed ? "Recording failed · \(record.title)" : "Recorded · \(record.title)",
+                                 body: record.isFailed ? (record.error ?? "unknown error") : record.numberLabel)
         }
     }
 
@@ -341,27 +341,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dragMonitor.start()
     }
 
-    // MARK: - cuts:// URL scheme (automation + tests)
-    //   cuts://cut?url=<encoded YouTube URL>   cuts://collection   cuts://settings   cuts://update   cuts://update-check   cuts://play?cut=N
+    // MARK: - records:// URL scheme (automation + tests)
+    //   crates://record?url=<encoded link>   crates://crate   crates://settings   crates://update   crates://update-check   crates://play?record=N
 
     @objc private func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let raw = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
-              let comps = URLComponents(string: raw), comps.scheme == "cuts" else { return }
+              let comps = URLComponents(string: raw), comps.scheme == "crates" else { return }
         switch comps.host {
-        case "cut":
+        case "record":
             if let encoded = comps.queryItems?.first(where: { $0.name == "url" })?.value,
                let url = YouTubeURL.extract(from: encoded) {
-                startCut(url)
+                startRecord(url)
             }
-        case "collection": collection.open()
+        case "crate": collection.open()
         case "settings": openSettings()
         case "update": updateYtdlp()
         case "update-check": UpdateCheck.shared.checkIfDue(force: true)
-        case "play": // cuts://play?cut=<number> — tests
-            if let n = comps.queryItems?.first(where: { $0.name == "cut" })?.value.flatMap(Int.init),
-               let cut = library.cuts.first(where: { $0.cutNumber == n }) {
+        case "play": // crates://play?record=<number> — tests
+            if let n = comps.queryItems?.first(where: { $0.name == "record" })?.value.flatMap(Int.init),
+               let record = library.records.first(where: { $0.number == n }) {
                 collection.open()
-                Player.shared.play(cut)
+                Player.shared.play(record)
             }
         default: break
         }

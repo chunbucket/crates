@@ -1,6 +1,6 @@
-# Third-party software bundled in Cuts.app
+# Third-party software bundled in Crates.app
 
-Cuts runs these as separate processes; none are linked into the app.
+Crates runs these as separate processes; none are linked into the app.
 
 ## yt-dlp
 `Contents/Resources/yt-dlp_macos/` — official standalone macOS build.

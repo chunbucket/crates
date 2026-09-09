@@ -2,23 +2,23 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The collection: stacked sleeve rows grouped by date.
-/// Each row: mini vinyl (art label) · title / cut nº · duration · flac.
+/// Each row: mini vinyl (art label) · title / record nº · duration · flac.
 /// Rows drag out as real files (Finder, Ableton) and reveal on hover; a
 /// failed row shows its reason and a Retry.
 struct CollectionView: View {
     @ObservedObject var library: Library
     @ObservedObject var downloads: DownloadManager
-    var onRetry: (Cut) -> Void
-    /// For a 403: refresh yt-dlp first, then re-cut.
-    var onUpdateAndRetry: (Cut) -> Void
+    var onRetry: (Record) -> Void
+    /// For a 403: refresh yt-dlp first, then re-record.
+    var onUpdateAndRetry: (Record) -> Void
     /// Remove from the shelf (owner decides about the file).
-    var onRemove: (Cut) -> Void
+    var onRemove: (Record) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.4)
-            if library.cuts.isEmpty && downloads.current == nil {
+            if library.records.isEmpty && downloads.current == nil {
                 emptyState
             } else {
                 ScrollView {
@@ -26,17 +26,17 @@ struct CollectionView: View {
                         // In flight up top; once it lands (filed or failed)
                         // the library row below takes over.
                         if let active = downloads.inFlight {
-                            ActiveRow(cut: active)
+                            ActiveRow(record: active)
                             Divider().opacity(0.25)
                         }
                         ForEach(downloads.queued) { item in
                             QueuedRow(url: item.url)
                             Divider().opacity(0.25)
                         }
-                        ForEach(grouped, id: \.0) { label, cuts in
+                        ForEach(grouped, id: \.0) { label, records in
                             DateHeader(label: label)
-                            ForEach(cuts) { cut in
-                                CutRow(cut: cut, onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry, onRemove: onRemove)
+                            ForEach(records) { record in
+                                RecordRow(record: record, onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry, onRemove: onRemove)
                                 Divider().opacity(0.25)
                             }
                         }
@@ -47,22 +47,22 @@ struct CollectionView: View {
         .frame(width: 340, height: 440)
     }
 
-    /// Cuts grouped by calendar day, newest first (library is already sorted).
+    /// Records grouped by calendar day, newest first (library is already sorted).
     /// A row being retried is represented by the ActiveRow while in flight.
-    private var grouped: [(String, [Cut])] {
+    private var grouped: [(String, [Record])] {
         let cal = Calendar.current
         let fmt = DateFormatter()
         fmt.dateFormat = "MMM d"
         let inFlight = downloads.inFlight?.id
-        var out: [(String, [Cut])] = []
-        for cut in library.cuts where cut.id != inFlight {
-            let label = cal.isDateInToday(cut.date) ? "TODAY"
-                : cal.isDateInYesterday(cut.date) ? "YESTERDAY"
-                : fmt.string(from: cut.date).uppercased()
+        var out: [(String, [Record])] = []
+        for record in library.records where record.id != inFlight {
+            let label = cal.isDateInToday(record.date) ? "TODAY"
+                : cal.isDateInYesterday(record.date) ? "YESTERDAY"
+                : fmt.string(from: record.date).uppercased()
             if out.last?.0 == label {
-                out[out.count - 1].1.append(cut)
+                out[out.count - 1].1.append(record)
             } else {
-                out.append((label, [cut]))
+                out.append((label, [record]))
             }
         }
         return out
@@ -70,11 +70,11 @@ struct CollectionView: View {
 
     private var header: some View {
         HStack {
-            Text("CUTS")
+            Text("CRATE")
                 .font(.system(size: 12, weight: .heavy, design: .monospaced))
                 .kerning(2.5)
             Spacer()
-            Text("\(library.cuts.count) on the shelf")
+            Text("\(library.records.count) in the crate")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
@@ -88,9 +88,9 @@ struct CollectionView: View {
             Image(systemName: "record.circle")
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(.tertiary)
-            Text("Nothing on the shelf yet")
+            Text("Nothing in the crate yet")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Drag a YouTube link onto the menu bar icon —\nthe record player will catch it.")
+            Text("Drag a link onto the menu bar icon —\nthe record player will catch it.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -117,32 +117,32 @@ struct DateHeader: View {
     }
 }
 
-struct CutRow: View {
-    let cut: Cut
-    var onRetry: (Cut) -> Void
-    var onUpdateAndRetry: (Cut) -> Void
-    var onRemove: (Cut) -> Void
+struct RecordRow: View {
+    let record: Record
+    var onRetry: (Record) -> Void
+    var onUpdateAndRetry: (Record) -> Void
+    var onRemove: (Record) -> Void
     @ObservedObject private var player = Player.shared
     @State private var hovering = false
     /// Checked once per appearance, not per render.
     @State private var fileMissing = false
 
     private func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-    /// Failed, or filed but the FLAC has gone: either way the fix is a re-cut.
-    private var needsRecut: Bool { cut.isFailed || fileMissing }
-    private var looksLike403: Bool { cut.error?.contains("403") == true }
+    /// Failed, or filed but the FLAC has gone: either way the fix is a re-record.
+    private var needsRecut: Bool { record.isFailed || fileMissing }
+    private var looksLike403: Bool { record.error?.contains("403") == true }
     /// This row is loaded in the player (playing or paused).
-    private var isLoaded: Bool { player.isCurrent(cut) }
+    private var isLoaded: Bool { player.isCurrent(record) }
     private var isPlaying: Bool { isLoaded && player.isPlaying }
 
     var body: some View {
         let row = HStack(spacing: 11) {
-            MiniVinyl(artPath: cut.artPath, spinning: isPlaying)
+            MiniVinyl(artPath: record.artPath, spinning: isPlaying)
                 .frame(width: 44, height: 44)
                 .opacity(needsRecut ? 0.55 : 1)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(cut.title)
+                Text(record.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
                 if isLoaded {
@@ -165,22 +165,22 @@ struct CutRow: View {
             if isLoaded {
                 // Transport stays visible while loaded, not just on hover.
                 RowButton(symbol: isPlaying ? "pause.fill" : "play.fill",
-                          help: isPlaying ? "Pause" : "Play") { player.toggle(cut) }
+                          help: isPlaying ? "Pause" : "Play") { player.toggle(record) }
                     .foregroundStyle(Color.cutsAmber)
             } else if hovering {
                 if needsRecut {
-                    Button { onRetry(cut) } label: {
+                    Button { onRetry(record) } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.orange)
-                    .help(cut.isFailed ? "Retry this cut" : "Cut it again (file is missing)")
-                } else if let url = cut.fileURL {
-                    RowButton(symbol: "play.fill", help: "Play") { player.play(cut) }
+                    .help(record.isFailed ? "Retry this record" : "Record it again (file is missing)")
+                } else if let url = record.fileURL {
+                    RowButton(symbol: "play.fill", help: "Play") { player.play(record) }
                     RowButton(symbol: "magnifyingglass", help: "Reveal FLAC in Finder") { reveal(url) }
                 }
-                RowButton(symbol: "trash", help: "Remove from shelf…") { onRemove(cut) }
+                RowButton(symbol: "trash", help: "Remove record…") { onRemove(record) }
             }
         }
         .padding(.horizontal, 14)
@@ -188,24 +188,24 @@ struct CutRow: View {
         .contentShape(Rectangle())
         .background(hovering ? Color.primary.opacity(0.06) : .clear)
         .onHover { hovering = $0 }
-        .onAppear { fileMissing = !cut.isFailed && !cut.fileExists }
+        .onAppear { fileMissing = !record.isFailed && !record.fileExists }
         .contextMenu {
             if needsRecut {
-                Button(cut.isFailed ? "Retry" : "Cut Again") { onRetry(cut) }
-                if looksLike403 { Button("Update yt-dlp, then Retry") { onUpdateAndRetry(cut) } }
-            } else if let url = cut.fileURL {
+                Button(record.isFailed ? "Retry" : "Record Again") { onRetry(record) }
+                if looksLike403 { Button("Update yt-dlp, then Retry") { onUpdateAndRetry(record) } }
+            } else if let url = record.fileURL {
                 Button("Reveal in Finder") { reveal(url) }
             }
             Button("Copy YouTube Link") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(cut.url, forType: .string)
+                NSPasteboard.general.setString(record.url, forType: .string)
             }
             Divider()
-            Button("Remove from Shelf…") { onRemove(cut) }
+            Button("Remove Record…") { onRemove(record) }
         }
 
-        // Only a cut whose file is really there drags out (Finder, Ableton).
-        if let url = cut.fileURL, !needsRecut {
+        // Only a record whose file is really there drags out (Finder, Ableton).
+        if let url = record.fileURL, !needsRecut {
             row.onDrag {
                 let provider = NSItemProvider(contentsOf: url) ?? NSItemProvider()
                 provider.suggestedName = url.lastPathComponent
@@ -217,9 +217,9 @@ struct CutRow: View {
     }
 
     private var subLine: String {
-        if cut.isFailed { return "\(cut.cutLabel) · failed — \(cut.error ?? "unknown error")" }
-        if fileMissing { return "\(cut.cutLabel) · file missing — moved or deleted?" }
-        return "\(cut.cutLabel) · \(cut.durationLabel) · FLAC"
+        if record.isFailed { return "\(record.numberLabel) · failed — \(record.error ?? "unknown error")" }
+        if fileMissing { return "\(record.numberLabel) · file missing — moved or deleted?" }
+        return "\(record.numberLabel) · \(record.durationLabel) · FLAC"
     }
 
     private static func mmss(_ seconds: Double) -> String {
@@ -283,14 +283,14 @@ struct Scrubber: View {
 }
 
 struct ActiveRow: View {
-    @ObservedObject var cut: ActiveCut
+    @ObservedObject var record: ActiveRecord
 
     var body: some View {
         HStack(spacing: 11) {
-            MiniVinyl(artPath: cut.artPath)
+            MiniVinyl(artPath: record.artPath)
                 .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 2) {
-                Text(cut.title)
+                Text(record.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
                 Text(statusLine)
@@ -298,7 +298,7 @@ struct ActiveRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            switch cut.phase {
+            switch record.phase {
             case .cutting(let p):
                 Text("\(Int(p * 100))%")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -320,17 +320,17 @@ struct ActiveRow: View {
     }
 
     private var statusLine: String {
-        switch cut.phase {
-        case .fetchingArt: return "\(cut.cutLabel) · reading the sleeve…"
-        case .cutting: return "\(cut.cutLabel) · cutting…"
-        case .pressing: return "\(cut.cutLabel) · pressing to flac…"
-        case .done: return "\(cut.cutLabel) · filed ✓"
+        switch record.phase {
+        case .fetchingArt: return "\(record.numberLabel) · reading the sleeve…"
+        case .cutting: return "\(record.numberLabel) · recording…"
+        case .pressing: return "\(record.numberLabel) · pressing to flac…"
+        case .done: return "\(record.numberLabel) · filed ✓"
         case .failed(let e): return "failed — \(e)"
         }
     }
 }
 
-/// A link waiting its turn behind the current cut.
+/// A link waiting its turn behind the current record.
 struct QueuedRow: View {
     let url: String
 

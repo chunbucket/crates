@@ -20,7 +20,7 @@ final class Settings: ObservableObject {
     private static let home = FileManager.default.homeDirectoryForCurrentUser
 
     /// Fresh-install default.
-    static let defaultDestination = home.appendingPathComponent("Music/Cuts", isDirectory: true)
+    static let defaultDestination = home.appendingPathComponent("Music/Crates", isDirectory: true)
     /// v0.1 hardcoded the owner's sample folder; adopt it when it's there and
     /// nothing has been chosen yet, so an upgrade doesn't move the library.
     static let legacyDestination = home.appendingPathComponent(
@@ -37,6 +37,13 @@ final class Settings: ObservableObject {
     }
 
     private init() {
+        // v0.2 was called Cuts: bring its preferences over once.
+        if UserDefaults.standard.string(forKey: Self.destinationKey) == nil,
+           let old = UserDefaults(suiteName: "me.ency.cuts") {
+            for key in [Self.destinationKey, Self.removePolicyKey, "hasLaunched", "lastNotifiedVersion"] {
+                if let value = old.object(forKey: key) { UserDefaults.standard.set(value, forKey: key) }
+            }
+        }
         if let stored = UserDefaults.standard.string(forKey: Self.destinationKey) {
             destinationDir = URL(fileURLWithPath: stored, isDirectory: true)
         } else if FileManager.default.fileExists(atPath: Self.legacyDestination.path) {
@@ -71,7 +78,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            LabeledContent("Cuts go to") {
+            LabeledContent("Records go to") {
                 HStack(spacing: 8) {
                     Text((settings.destinationDir.path as NSString).abbreviatingWithTildeInPath)
                         .truncationMode(.middle)
@@ -96,12 +103,12 @@ struct SettingsView: View {
                     }
                 }
             }
-            Picker("Removing a cut", selection: $settings.removePolicy) {
+            Picker("Removing a record", selection: $settings.removePolicy) {
                 Text("Ask each time").tag(RemovePolicy.ask)
                 Text("Keep the file").tag(RemovePolicy.keep)
                 Text("Move the file to Trash").tag(RemovePolicy.trash)
             }
-            LabeledContent("Cuts") { Text(Settings.appVersion).foregroundStyle(.secondary) }
+            LabeledContent("Crates") { Text(Settings.appVersion).foregroundStyle(.secondary) }
         }
         .formStyle(.grouped)
         .frame(width: 440)
@@ -144,7 +151,7 @@ final class SettingsWindow {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 220),
                              styleMask: [.titled, .closable],
                              backing: .buffered, defer: false)
-            w.title = "Cuts Settings"
+            w.title = "Crates Settings"
             w.contentView = host
             w.setContentSize(host.fittingSize)
             w.isReleasedWhenClosed = false

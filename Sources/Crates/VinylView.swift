@@ -1,11 +1,11 @@
 import SwiftUI
 
 /// The record: grooved vinyl with the video art as its center label.
-/// Progress renders as grooves being cut — the uncut remainder is a
+/// Progress renders as grooves being record — the uncut remainder is a
 /// lighter "raw acetate" wedge sweeping clockwise from 12 o'clock.
 struct VinylView: View {
     var artPath: String?
-    var progress: Double?      // nil = fully cut (finished record)
+    var progress: Double?      // nil = fully record (finished record)
     var spinning: Bool
 
     @State private var angle: Double = 0
@@ -94,7 +94,7 @@ struct VinylView: View {
     }
 }
 
-/// Pie wedge covering the not-yet-cut part of the record (progress..1),
+/// Pie wedge covering the not-yet-record part of the record (progress..1),
 /// with the center label area punched out.
 struct UncutWedge: Shape {
     var progress: Double
