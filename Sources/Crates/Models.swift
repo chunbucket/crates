@@ -19,6 +19,12 @@ struct Record: Identifiable, Equatable {
     var artPath: String?
     var duration: Double?
     let date: Date
+    /// From the in-app analyser; `analysis` is the analyser version that
+    /// produced them (0 = not yet), so a better algorithm can redo everyone.
+    var bpm: Double?
+    var key: String?       // "A minor"
+    var camelot: String?   // "8A"
+    var analysis: Int = 0
 
     var isFailed: Bool { status == RecordStatus.failed }
     var fileURL: URL? { filePath.map { URL(fileURLWithPath: $0) } }
@@ -49,6 +55,7 @@ struct Record: Identifiable, Equatable {
 extension Record: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, url, title, uploader, status, error, filePath, artPath, duration, date
+        case bpm, key, camelot, analysis
         case number = "cutNumber"   // on-disk key from v0.1; the Swift name moved on
     }
 
@@ -66,6 +73,10 @@ extension Record: Codable {
         artPath = try c.decodeIfPresent(String.self, forKey: .artPath)
         duration = try c.decodeIfPresent(Double.self, forKey: .duration)
         date = try c.decode(Date.self, forKey: .date)
+        bpm = try c.decodeIfPresent(Double.self, forKey: .bpm)
+        key = try c.decodeIfPresent(String.self, forKey: .key)
+        camelot = try c.decodeIfPresent(String.self, forKey: .camelot)
+        analysis = try c.decodeIfPresent(Int.self, forKey: .analysis) ?? 0
     }
 
     func encode(to encoder: Encoder) throws {
@@ -81,7 +92,34 @@ extension Record: Codable {
         try c.encodeIfPresent(artPath, forKey: .artPath)
         try c.encodeIfPresent(duration, forKey: .duration)
         try c.encode(date, forKey: .date)
+        try c.encodeIfPresent(bpm, forKey: .bpm)
+        try c.encodeIfPresent(key, forKey: .key)
+        try c.encodeIfPresent(camelot, forKey: .camelot)
+        try c.encode(analysis, forKey: .analysis)
     }
+}
+
+/// A user's crate. Records can sit in any number of crates; membership lives
+/// here, on the crate, so a record row stays a plain record.
+struct Crate: Codable, Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var recordIDs: [UUID]
+    let created: Date
+
+    init(name: String) {
+        id = UUID()
+        self.name = name
+        recordIDs = []
+        created = Date()
+    }
+}
+
+/// Which records a list shows. All and Unsorted are virtual, not stored.
+enum CrateFilter: Equatable {
+    case all
+    case unsorted
+    case crate(UUID)
 }
 
 enum RecordPhase: Equatable {
