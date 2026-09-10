@@ -33,11 +33,15 @@ enum MilkCrate {
         return p
     }
 
-    /// Where the standing records go (box units), and their radius. Records
-    /// are taller than the crate, so their tops clear the far rim and they
-    /// read as standing, not lying in it.
-    static let recordSpots: [CGPoint] = [CGPoint(x: -0.34, y: -1.40), CGPoint(x: 0.0, y: -1.50), CGPoint(x: 0.34, y: -1.40)]
-    static let recordRadius = 0.42
+    /// Sleeves stand on edge, faces parallel to the front wall, packed from
+    /// the back of the crate forward. Taller than the crate, so their tops
+    /// show over the near rim.
+    static let sleeveCount = 7
+    static let sleeveX0 = 0.13, sleeveWidth = 0.74, sleeveHeight = 1.06 * h, sleeveThickness = 0.028
+    static func sleeveDepth(_ i: Int) -> Double {   // i = 0 is the backmost
+        let back = d - 0.16, front = 0.20
+        return back - (back - front) * Double(i) / Double(max(1, sleeveCount - 1))
+    }
 
     struct Palette {
         var face: Color        // right face
@@ -69,6 +73,9 @@ struct CrateBack: View {
             let t = MilkCrate.fit(size)
             let (w, d, h, r) = (MilkCrate.w, MilkCrate.d, MilkCrate.h, MilkCrate.rim)
             let P = MilkCrate.project
+            // a soft shadow on the ground
+            let base = MilkCrate.poly([P(-0.08, -0.08, -0.02), P(w + 0.1, -0.08, -0.02), P(w + 0.1, d + 0.1, -0.02), P(-0.08, d + 0.1, -0.02)], t)
+            ctx.fill(base, with: .color(.black.opacity(0.35)))
             // opening floor + inner walls, one darker parallelogram
             ctx.fill(MilkCrate.poly([P(r, r, h), P(w - r, r, h), P(w - r, d - r, h), P(r, d - r, h)], t),
                      with: .color(palette.inside))
@@ -149,7 +156,62 @@ struct CrateFront: View {
     }
 }
 
-/// The crate with up to three of a crate's records standing in it.
+/// One sleeve standing in the crate: its face (cover art or plain card)
+/// skewed into the crate's projection, and its top edge.
+struct SleeveView: View {
+    let index: Int
+    let record: Record?
+    let size: CGFloat
+    /// The unit-square view is drawn at this many points, then skewed.
+    private let px: CGFloat = 100
+
+    private var faceTransform: CGAffineTransform {
+        let y0 = MilkCrate.sleeveDepth(index)
+        let x0 = MilkCrate.sleeveX0, sw = MilkCrate.sleeveWidth, sh = MilkCrate.sleeveHeight
+        // local (u, v) in [0,1] → 3D (x0 + u·sw, y0, sh − v·sh) → 2D
+        let face = CGAffineTransform(a: 0.866 * sw, b: -0.5 * sw, c: 0, d: sh,
+                                     tx: 0.866 * (x0 - y0), ty: -0.5 * (x0 + y0) - sh)
+        return CGAffineTransform(scaleX: 1 / px, y: 1 / px)
+            .concatenating(face)
+            .concatenating(MilkCrate.fit(CGSize(width: size, height: size)))
+    }
+
+    private var topEdge: Path {
+        let t = MilkCrate.fit(CGSize(width: size, height: size))
+        let y0 = MilkCrate.sleeveDepth(index), x0 = MilkCrate.sleeveX0
+        let sw = MilkCrate.sleeveWidth, sh = MilkCrate.sleeveHeight, th = MilkCrate.sleeveThickness
+        let P = MilkCrate.project
+        return MilkCrate.poly([P(x0, y0, sh), P(x0 + sw, y0, sh), P(x0 + sw, y0 + th, sh), P(x0, y0 + th, sh)], t)
+    }
+
+    /// Plain sleeves behind the covers: cream, black, grey — the usual crate.
+    private var blank: Color {
+        [Color(red: 0.90, green: 0.87, blue: 0.78), Color(white: 0.12), Color(white: 0.55),
+         Color(red: 0.86, green: 0.82, blue: 0.70)][index % 4]
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Group {
+                if let p = record?.artPath, let img = NSImage(contentsOfFile: p) {
+                    Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    blank
+                }
+            }
+            .frame(width: px, height: px)
+            .clipped()
+            .overlay(Rectangle().strokeBorder(Color.black.opacity(0.35), lineWidth: 2))
+            .transformEffect(faceTransform)
+            topEdge.fill(Color.white.opacity(0.85))
+            topEdge.stroke(Color.black.opacity(0.25), lineWidth: 0.5)
+        }
+        .frame(width: size, height: size, alignment: .topLeading)
+    }
+}
+
+/// The crate with a crate's records standing in it: cover art on the
+/// front sleeves, plain sleeves behind.
 struct MilkCrateIcon: View {
     var sleeves: [Record]
     var size: CGFloat = 78
@@ -157,17 +219,13 @@ struct MilkCrateIcon: View {
     var lattice = true
 
     var body: some View {
-        let t = MilkCrate.fit(CGSize(width: size, height: size))
-        let radius = CGFloat(MilkCrate.recordRadius) * t.a
-        ZStack {
+        let n = sleeves.isEmpty ? 0 : MilkCrate.sleeveCount
+        ZStack(alignment: .topLeading) {
             CrateBack(palette: palette)
-            ForEach(Array(MilkCrate.recordSpots.enumerated()), id: \.offset) { i, spot in
-                let record = i < sleeves.count ? sleeves[i] : nil
-                let center = spot.applying(t)
-                MiniVinyl(artPath: record?.artPath)
-                    .frame(width: radius * 2, height: radius * 2)
-                    .opacity(record == nil ? 0.22 : 1)
-                    .position(x: center.x, y: center.y)
+            // back to front; the newest records take the front slots
+            ForEach(0..<n, id: \.self) { i in
+                let fromFront = n - 1 - i
+                SleeveView(index: i, record: fromFront < sleeves.count ? sleeves[fromFront] : nil, size: size)
             }
             CrateFront(palette: palette, lattice: lattice)
         }
