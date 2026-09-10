@@ -14,16 +14,19 @@ struct CrateListView: View {
     var onRemove: (Record) -> Void
     var onNewCrate: (Record?) -> Void
 
-    /// What's fresh: today's records, newest first, minus the one in flight.
+    /// What's fresh: today's records that haven't been filed in a crate yet,
+    /// newest first, minus the one in flight. Filing one drops it from here.
     private var fresh: [Record] {
         let inFlight = downloads.inFlight?.id
-        return Array(library.records.filter { Calendar.current.isDateInToday($0.date) && $0.id != inFlight }.prefix(5))
+        return Array(library.records.filter {
+            Calendar.current.isDateInToday($0.date) && $0.id != inFlight && !library.isSorted($0)
+        }.prefix(5))
     }
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
 
-    /// A dragged row carries its FLAC's URL; find the record by path.
-    private func resolve(_ url: URL) -> Record? { library.records.first { $0.filePath == url.path } }
+    /// A dragged row carries its record id.
+    private func resolve(_ id: UUID) -> Record? { library.records.first { $0.id == id } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,7 +105,7 @@ struct CrateTile: View {
     let sleeves: [Record]
     var onOpen: () -> Void
     var onDrop: ((Record) -> Void)? = nil
-    var resolve: ((URL) -> Record?)? = nil
+    var resolve: ((UUID) -> Record?)? = nil
     @State private var hovering = false
     @State private var targeted = false
 
@@ -130,12 +133,14 @@ struct CrateTile: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .onDrop(of: [.fileURL], isTargeted: onDrop == nil ? .constant(false) : $targeted) { providers in
-            guard let onDrop, let resolve, let provider = providers.first else { return false }
-            _ = provider.loadObject(ofClass: NSURL.self) { object, _ in
-                guard let url = object as? URL ?? (object as? NSURL).map({ $0 as URL }) else { return }
+        .onDrop(of: [.cratesRecord], isTargeted: onDrop == nil ? .constant(false) : $targeted) { providers in
+            guard let onDrop, let resolve,
+                  let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.cratesRecord.identifier) })
+            else { return false }
+            _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.cratesRecord.identifier) { data, _ in
+                guard let data, let id = UUID(uuidString: String(decoding: data, as: UTF8.self)) else { return }
                 DispatchQueue.main.async {
-                    if let record = resolve(url) {
+                    if let record = resolve(id) {
                         onDrop(record)
                         Log.d("dropped \(record.numberLabel) onto crate \(name)")
                     }

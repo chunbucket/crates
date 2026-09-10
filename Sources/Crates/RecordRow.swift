@@ -1,6 +1,12 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+extension UTType {
+    /// A record dragged inside the app: the payload is its id. Finder and
+    /// Ableton never see this; they get the file promise next to it.
+    static let cratesRecord = UTType(exportedAs: "me.ency.crates.record")
+}
+
 extension Color {
     /// The app's accent: the menu bar disc when the crate is open, the scrubber fill.
     static let cratesAmber = Color(red: 1.0, green: 0.71, blue: 0.33)
@@ -153,6 +159,12 @@ struct RecordRow: View {
             row.onDrag {
                 let provider = NSItemProvider(contentsOf: url) ?? NSItemProvider()
                 provider.suggestedName = url.lastPathComponent
+                let id = record.id.uuidString
+                provider.registerDataRepresentation(forTypeIdentifier: UTType.cratesRecord.identifier,
+                                                    visibility: .ownProcess) { completion in
+                    completion(Data(id.utf8), nil)
+                    return nil
+                }
                 return provider
             }
         } else {

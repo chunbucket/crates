@@ -37,5 +37,18 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Crates record reference</string>
+			<key>UTTypeIdentifier</key>
+			<string>me.ency.crates.record</string>
+		</dict>
+	</array>
 </dict>
 </plist>
