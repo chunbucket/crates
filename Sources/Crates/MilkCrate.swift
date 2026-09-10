@@ -125,7 +125,7 @@ struct CrateFront: View {
         let zone = CGRect(x: 0.07, y: 0.30, width: 0.86, height: 0.58)
         ctx.fill(Path(zone).applying(m), with: .color(palette.hole))
         var bars = Path()
-        let bar = 0.05, step = 0.19
+        let bar = 0.06, step = 0.24   // coarse enough to read as holes at 84pt
         var k = -1.0
         while k < 2.0 {
             // "/" and "\" diagonals as thin parallelograms
@@ -154,7 +154,7 @@ struct MilkCrateIcon: View {
     var sleeves: [Record]
     var size: CGFloat = 78
     var palette: MilkCrate.Palette = .white
-    var lattice = false
+    var lattice = true
 
     var body: some View {
         let t = MilkCrate.fit(CGSize(width: size, height: size))
