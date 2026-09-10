@@ -1,0 +1,173 @@
+import SwiftUI
+
+/// The milk crate, as vector geometry: an isometric open box with the top
+/// rim, a handle slot on each visible face, the diagonal lattice below the
+/// band, corner posts and a bottom band. Drawn in two layers so records can
+/// stand inside it: `CrateBack` (the far inner walls), then the records,
+/// then `CrateFront` (rim and the two visible faces).
+enum MilkCrate {
+    /// Projection: the front vertical edge is at the origin, x goes up-right,
+    /// y goes up-left, z goes up. Box is w × d × h in these units.
+    static let w = 1.0, d = 1.0, h = 0.82
+    static let rim = 0.09   // rim depth seen from above
+
+    static func project(_ x: Double, _ y: Double, _ z: Double) -> CGPoint {
+        CGPoint(x: 0.866 * (x - y), y: -0.5 * (x + y) - z)
+    }
+
+    /// Scale + translate that fits the box into `size`.
+    static func fit(_ size: CGSize) -> CGAffineTransform {
+        let minX = -0.866 * d, maxX = 0.866 * w
+        let minY = -(w + d) / 2 - h - 0.12, maxY = 0.0   // headroom for the records
+        let scale = min(size.width / (maxX - minX), size.height / (maxY - minY)) * 0.96
+        let cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+        return CGAffineTransform(translationX: size.width / 2, y: size.height / 2)
+            .scaledBy(x: scale, y: scale)
+            .translatedBy(x: -cx, y: -cy)
+    }
+
+    static func poly(_ pts: [CGPoint], _ t: CGAffineTransform) -> Path {
+        var p = Path()
+        p.addLines(pts.map { $0.applying(t) })
+        p.closeSubpath()
+        return p
+    }
+
+    /// Where the standing records go (box units), and their radius. Records
+    /// are taller than the crate, so their tops clear the far rim and they
+    /// read as standing, not lying in it.
+    static let recordSpots: [CGPoint] = [CGPoint(x: -0.34, y: -1.40), CGPoint(x: 0.0, y: -1.50), CGPoint(x: 0.34, y: -1.40)]
+    static let recordRadius = 0.42
+
+    struct Palette {
+        var face: Color        // right face
+        var faceDark: Color    // left face
+        var rimLight: Color
+        var inside: Color
+        var hole: Color
+
+        static let yellow = Palette(
+            face: Color(red: 0.90, green: 0.80, blue: 0.20),
+            faceDark: Color(red: 0.74, green: 0.65, blue: 0.14),
+            rimLight: Color(red: 0.97, green: 0.90, blue: 0.38),
+            inside: Color(red: 0.55, green: 0.48, blue: 0.10),
+            hole: Color.black.opacity(0.55))
+        static let mono = Palette(
+            face: Color(white: 0.62), faceDark: Color(white: 0.46), rimLight: Color(white: 0.78),
+            inside: Color(white: 0.28), hole: Color.black.opacity(0.55))
+    }
+}
+
+/// The far inner walls, seen through the opening.
+struct CrateBack: View {
+    var palette: MilkCrate.Palette = .yellow
+    var body: some View {
+        Canvas { ctx, size in
+            let t = MilkCrate.fit(size)
+            let (w, d, h, r) = (MilkCrate.w, MilkCrate.d, MilkCrate.h, MilkCrate.rim)
+            let P = MilkCrate.project
+            // opening floor + inner walls, one darker parallelogram
+            ctx.fill(MilkCrate.poly([P(r, r, h), P(w - r, r, h), P(w - r, d - r, h), P(r, d - r, h)], t),
+                     with: .color(palette.inside))
+            // inner back walls catch a little light along their top
+            ctx.fill(MilkCrate.poly([P(w - r, r, h), P(w - r, d - r, h), P(w - r, d - r, h - 0.35), P(w - r, r, h - 0.35)], t),
+                     with: .color(palette.faceDark.opacity(0.9)))
+            ctx.fill(MilkCrate.poly([P(r, d - r, h), P(w - r, d - r, h), P(w - r, d - r, h - 0.35), P(r, d - r, h - 0.35)], t),
+                     with: .color(palette.face.opacity(0.9)))
+        }
+    }
+}
+
+/// Rim and the two visible faces with their details.
+struct CrateFront: View {
+    var palette: MilkCrate.Palette = .yellow
+    var lattice = true
+
+    var body: some View {
+        Canvas { ctx, size in
+            let t = MilkCrate.fit(size)
+            let (w, d, h, r) = (MilkCrate.w, MilkCrate.d, MilkCrate.h, MilkCrate.rim)
+            let P = MilkCrate.project
+
+            // Faces: local (u across, v down from the top edge) → 2D.
+            let right = CGAffineTransform(a: 0.866 * w, b: -0.5 * w, c: 0, d: h, tx: 0, ty: -h).concatenating(t)
+            let left  = CGAffineTransform(a: -0.866 * d, b: -0.5 * d, c: 0, d: h, tx: 0, ty: -h).concatenating(t)
+            drawFace(&ctx, right, fill: palette.face)
+            drawFace(&ctx, left, fill: palette.faceDark)
+
+            // Rim: outer top parallelogram minus the opening.
+            var rimPath = MilkCrate.poly([P(0, 0, h), P(w, 0, h), P(w, d, h), P(0, d, h)], t)
+            rimPath.addPath(MilkCrate.poly([P(r, r, h), P(w - r, r, h), P(w - r, d - r, h), P(r, d - r, h)], t))
+            ctx.fill(rimPath, with: .color(palette.rimLight), style: FillStyle(eoFill: true))
+            // a hairline along the front top edges
+            var edge = Path()
+            edge.move(to: P(0, d, h).applying(t)); edge.addLine(to: P(0, 0, h).applying(t)); edge.addLine(to: P(w, 0, h).applying(t))
+            ctx.stroke(edge, with: .color(.white.opacity(0.35)), lineWidth: max(0.6, size.width * 0.006))
+        }
+    }
+
+    private func drawFace(_ ctx: inout GraphicsContext, _ m: CGAffineTransform, fill: Color) {
+        func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Path {
+            Path(CGRect(x: x, y: y, width: w, height: h)).applying(m)
+        }
+        // solid face
+        ctx.fill(rect(0, 0, 1, 1), with: .color(fill))
+        // ribs in the top band
+        for v in [0.055, 0.105] { ctx.fill(rect(0.03, v, 0.94, 0.012), with: .color(.black.opacity(0.18))) }
+        // handle slot
+        ctx.fill(Path(roundedRect: CGRect(x: 0.33, y: 0.145, width: 0.34, height: 0.085), cornerRadius: 0.04).applying(m),
+                 with: .color(palette.hole))
+        guard lattice else { return }
+        // lattice zone: holes first, then the bars over them
+        let zone = CGRect(x: 0.07, y: 0.30, width: 0.86, height: 0.58)
+        ctx.fill(Path(zone).applying(m), with: .color(palette.hole))
+        var bars = Path()
+        let bar = 0.05, step = 0.19
+        var k = -1.0
+        while k < 2.0 {
+            // "/" and "\" diagonals as thin parallelograms
+            bars.addLines([CGPoint(x: k, y: zone.maxY), CGPoint(x: k + bar, y: zone.maxY),
+                           CGPoint(x: k + bar + zone.height, y: zone.minY), CGPoint(x: k + zone.height, y: zone.minY)])
+            bars.closeSubpath()
+            bars.addLines([CGPoint(x: k, y: zone.minY), CGPoint(x: k + bar, y: zone.minY),
+                           CGPoint(x: k + bar + zone.height, y: zone.maxY), CGPoint(x: k + zone.height, y: zone.maxY)])
+            bars.closeSubpath()
+            k += step
+        }
+        var zoneClip = ctx
+        zoneClip.clip(to: Path(zone).applying(m))
+        zoneClip.fill(bars.applying(m), with: .color(fill))
+        // corner posts and the bands above/below the lattice
+        ctx.fill(rect(0, 0.28, 0.07, 0.62), with: .color(fill))
+        ctx.fill(rect(0.93, 0.28, 0.07, 0.62), with: .color(fill))
+        ctx.fill(rect(0, 0.28, 1, 0.03), with: .color(fill))
+        ctx.fill(rect(0, 0.88, 1, 0.12), with: .color(fill))
+        ctx.fill(rect(0.03, 0.905, 0.94, 0.012), with: .color(.black.opacity(0.18)))
+    }
+}
+
+/// The crate with up to three of a crate's records standing in it.
+struct MilkCrateIcon: View {
+    var sleeves: [Record]
+    var size: CGFloat = 78
+    var palette: MilkCrate.Palette = .yellow
+    var lattice = true
+
+    var body: some View {
+        let t = MilkCrate.fit(CGSize(width: size, height: size))
+        let radius = CGFloat(MilkCrate.recordRadius) * t.a
+        ZStack {
+            CrateBack(palette: palette)
+            ForEach(Array(MilkCrate.recordSpots.enumerated()), id: \.offset) { i, spot in
+                let record = i < sleeves.count ? sleeves[i] : nil
+                let center = spot.applying(t)
+                MiniVinyl(artPath: record?.artPath)
+                    .frame(width: radius * 2, height: radius * 2)
+                    .opacity(record == nil ? 0.22 : 1)
+                    .position(x: center.x, y: center.y)
+            }
+            CrateFront(palette: palette, lattice: lattice)
+        }
+        .frame(width: size, height: size)
+    }
+}

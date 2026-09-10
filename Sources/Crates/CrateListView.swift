@@ -64,7 +64,7 @@ struct CrateTile: View {
     var body: some View {
         Button(action: onOpen) {
             VStack(spacing: 7) {
-                CrateIcon(sleeves: sleeves, size: 78)
+                MilkCrateIcon(sleeves: sleeves, size: 84)
                     .scaleEffect(hovering ? 1.04 : 1)
                     .animation(.spring(duration: 0.25), value: hovering)
                 Text(name)
@@ -82,60 +82,5 @@ struct CrateTile: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-    }
-}
-
-/// A milk crate seen from the front, records standing in it: the first
-/// three sleeves peek out over the rim.
-struct CrateIcon: View {
-    var sleeves: [Record]
-    var size: CGFloat = 78
-    var tint: Color = Color(white: 0.30)
-
-    var body: some View {
-        let w = size, h = size
-        let boxTop = h * 0.42, boxH = h - boxTop
-        ZStack(alignment: .top) {
-            // records standing behind the front face
-            HStack(spacing: -w * 0.16) {
-                ForEach(0..<max(1, min(3, sleeves.count)), id: \.self) { i in
-                    let record = i < sleeves.count ? sleeves[i] : nil
-                    MiniVinyl(artPath: record?.artPath)
-                        .frame(width: w * 0.46, height: w * 0.46)
-                        .offset(y: CGFloat(i % 2) * 3)
-                        .opacity(record == nil ? 0.25 : 1)
-                }
-            }
-            .padding(.top, h * 0.06)
-
-            // the crate front
-            ZStack {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(LinearGradient(colors: [tint.opacity(1), tint.opacity(0.62)], startPoint: .top, endPoint: .bottom))
-                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
-                // rim
-                VStack {
-                    Rectangle().fill(Color.white.opacity(0.14)).frame(height: 5)
-                    Spacer()
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                // slats
-                HStack(spacing: 0) {
-                    ForEach(0..<3, id: \.self) { _ in
-                        Spacer()
-                        Rectangle().fill(Color.black.opacity(0.28)).frame(width: 1.5)
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 9)
-                // handle slot
-                Capsule().fill(Color.black.opacity(0.42)).frame(width: w * 0.30, height: 5).offset(y: -boxH * 0.20)
-            }
-            .frame(width: w, height: boxH)
-            .padding(.top, boxTop)
-            .shadow(color: .black.opacity(0.45), radius: 6, y: 3)
-        }
-        .frame(width: w, height: h)
     }
 }
