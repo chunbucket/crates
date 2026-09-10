@@ -214,44 +214,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Crates
 
-    /// The panel can't take keyboard focus (it never becomes key), so names
-    /// are asked for in a modal alert, shown above the panel.
-    private func promptName(title: String, message: String, current: String = "", button: String) -> String? {
-        collection.holdOpen = true
-        let level = collection.level
-        collection.level = .floating
-        defer {
-            collection.holdOpen = false
-            collection.level = level
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.placeholderString = "Crate name"
-        field.stringValue = current
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.addButton(withTitle: button)
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
-        return name.isEmpty ? nil : name
-    }
-
     /// Make a crate, and file `record` in it if given.
     private func newCrate(with record: Record?) {
-        guard let name = promptName(title: "New crate",
-                                    message: record.map { "“\($0.title)” goes in it." } ?? "Name it after the night, the set, the mood.",
-                                    button: "Create") else { return }
-        let crate = library.addCrate(named: name)
-        if let record { library.add(record, to: crate.id) }
+        collection.ask(PromptState.Prompt(
+            title: "New crate",
+            subtitle: record.map { "“\($0.title)” goes in it." } ?? "Name it after the night, the set, the mood.",
+            initial: "", button: "Create") { [weak self] name in
+                guard let self else { return }
+                let crate = self.library.addCrate(named: name)
+                if let record { self.library.add(record, to: crate.id) }
+            })
     }
 
     private func renameCrate(_ crate: Crate) {
-        guard let name = promptName(title: "Rename crate", message: "", current: crate.name, button: "Rename") else { return }
-        library.renameCrate(crate.id, to: name)
+        collection.ask(PromptState.Prompt(title: "Rename crate", subtitle: "", initial: crate.name, button: "Rename") { [weak self] name in
+            self?.library.renameCrate(crate.id, to: name)
+        })
     }
 
     // MARK: - Removing a record
@@ -392,7 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - records:// URL scheme (automation + tests)
-    //   crates://record?url=<encoded link>   crates://crate[?name=…|?filter=all|unsorted]   crates://settings   crates://update   crates://update-check   crates://play?record=N
+    //   crates://record?url=<encoded link>   crates://crate[?name=…|?filter=all|unsorted]   crates://settings   crates://update   crates://update-check   crates://new-crate   crates://play?record=N
 
     @objc private func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let raw = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
@@ -420,6 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "settings": openSettings()
         case "update": updateYtdlp()
         case "update-check": UpdateCheck.shared.checkIfDue(force: true)
+        case "new-crate": newCrate(with: nil)
         case "play": // crates://play?record=<number> — tests
             if let n = comps.queryItems?.first(where: { $0.name == "record" })?.value.flatMap(Int.init),
                let record = library.records.first(where: { $0.number == n }) {

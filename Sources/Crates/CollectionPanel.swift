@@ -5,6 +5,18 @@ import SwiftUI
 /// menu bar icon. Replaces NSPopover, whose status-item anchoring proved
 /// unreliable on this setup (notch-adjacent icon, macOS 26) — here every
 /// coordinate is computed explicitly, same as the shelf.
+/// A name being asked for inside the panel (new crate, rename).
+final class PromptState: ObservableObject {
+    struct Prompt {
+        let title: String
+        let subtitle: String
+        let initial: String
+        let button: String
+        let commit: (String) -> Void
+    }
+    @Published var current: Prompt?
+}
+
 final class CollectionPanel: NSPanel {
     private var hosting: NSHostingView<AnyView>?
     private var monitors: [Any] = []
@@ -16,6 +28,9 @@ final class CollectionPanel: NSPanel {
     var holdOpen = false
 
     let nav = CrateNavigation()
+    let prompt = PromptState()
+    /// The panel stays out of the keyboard's way except while a prompt is up.
+    private var wantsKeyboard = false
 
     init(library: Library, downloads: DownloadManager,
          onRetry: @escaping (Record) -> Void, onUpdateAndRetry: @escaping (Record) -> Void,
@@ -34,9 +49,10 @@ final class CollectionPanel: NSPanel {
         animationBehavior = .none
 
         let root = AnyView(
-            CollectionView(library: library, downloads: downloads, nav: nav,
+            CollectionView(library: library, downloads: downloads, nav: nav, prompt: prompt,
                            onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
-                           onRemove: onRemove, onNewCrate: onNewCrate, onRenameCrate: onRenameCrate)
+                           onRemove: onRemove, onNewCrate: onNewCrate, onRenameCrate: onRenameCrate,
+                           onEndPrompt: { [weak self] in self?.endPrompt() })
                 .background(.ultraThickMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
@@ -50,7 +66,21 @@ final class CollectionPanel: NSPanel {
         hosting = host
     }
 
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { wantsKeyboard }
+
+    /// Show a name prompt inside the panel and take the keyboard for it.
+    func ask(_ p: PromptState.Prompt) {
+        if !isVisible { open() }
+        prompt.current = p
+        wantsKeyboard = true
+        makeKey()
+    }
+
+    func endPrompt() {
+        prompt.current = nil
+        wantsKeyboard = false
+        resignKey()
+    }
 
     func toggle() {
         isVisible ? closePanel() : open()
@@ -81,6 +111,7 @@ final class CollectionPanel: NSPanel {
     func closePanel() {
         removeMonitors()
         guard isVisible else { return }
+        if prompt.current != nil { endPrompt() }
         onVisibilityChange?(false)
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.12

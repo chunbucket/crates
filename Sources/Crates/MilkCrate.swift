@@ -52,6 +52,9 @@ enum MilkCrate {
             rimLight: Color(red: 0.97, green: 0.90, blue: 0.38),
             inside: Color(red: 0.55, green: 0.48, blue: 0.10),
             hole: Color.black.opacity(0.55))
+        static let white = Palette(
+            face: Color(white: 0.90), faceDark: Color(white: 0.74), rimLight: Color(white: 0.98),
+            inside: Color(white: 0.30), hole: Color.black.opacity(0.5))
         static let mono = Palette(
             face: Color(white: 0.62), faceDark: Color(white: 0.46), rimLight: Color(white: 0.78),
             inside: Color(white: 0.28), hole: Color.black.opacity(0.55))
@@ -150,8 +153,8 @@ struct CrateFront: View {
 struct MilkCrateIcon: View {
     var sleeves: [Record]
     var size: CGFloat = 78
-    var palette: MilkCrate.Palette = .yellow
-    var lattice = true
+    var palette: MilkCrate.Palette = .white
+    var lattice = false
 
     var body: some View {
         let t = MilkCrate.fit(CGSize(width: size, height: size))

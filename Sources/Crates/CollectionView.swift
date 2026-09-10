@@ -6,11 +6,13 @@ struct CollectionView: View {
     @ObservedObject var library: Library
     @ObservedObject var downloads: DownloadManager
     @ObservedObject var nav: CrateNavigation
+    @ObservedObject var prompt: PromptState
     var onRetry: (Record) -> Void
     var onUpdateAndRetry: (Record) -> Void
     var onRemove: (Record) -> Void
     var onNewCrate: (Record?) -> Void
     var onRenameCrate: (Crate) -> Void
+    var onEndPrompt: () -> Void
 
     /// Push (a crate opens) slides the list in from the right and the grid
     /// out to the left; pop reverses both.
@@ -22,7 +24,7 @@ struct CollectionView: View {
         ZStack {
             if let filter = nav.filter {
                 RecordListView(filter: filter, library: library, downloads: downloads,
-                               onBack: { go(nil) }, onOpen: { go($0) },
+                               onBack: { go(nil) },
                                onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
                                onRemove: onRemove, onNewCrate: onNewCrate)
                     .transition(.move(edge: .trailing))
@@ -32,9 +34,95 @@ struct CollectionView: View {
                               onNew: { onNewCrate(nil) }, onRename: onRenameCrate)
                     .transition(.move(edge: .leading))
             }
+            if let p = prompt.current {
+                NamePromptView(prompt: p, onCancel: onEndPrompt) { name in
+                    p.commit(name)
+                    onEndPrompt()
+                }
+                .transition(.opacity)
+                .zIndex(2)
+            }
         }
         .frame(width: 340, height: 440)
         .clipped()
+        .animation(.easeOut(duration: 0.18), value: prompt.current == nil)
+    }
+}
+
+/// The in-panel modal: a card over the content asking for one name.
+struct NamePromptView: View {
+    let prompt: PromptState.Prompt
+    var onCancel: () -> Void
+    var onCommit: (String) -> Void
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(prompt: PromptState.Prompt, onCancel: @escaping () -> Void, onCommit: @escaping (String) -> Void) {
+        self.prompt = prompt
+        self.onCancel = onCancel
+        self.onCommit = onCommit
+        _text = State(initialValue: prompt.initial)
+    }
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespaces) }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .onTapGesture(perform: onCancel)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(prompt.title.uppercased())
+                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                    .kerning(2.5)
+                if !prompt.subtitle.isEmpty {
+                    Text(prompt.subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                TextField("Crate name", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.08)))
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(focused ? Color.cratesAmber.opacity(0.7) : Color.primary.opacity(0.12), lineWidth: 1))
+                    .focused($focused)
+                    .onSubmit(commit)
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button("Cancel", action: onCancel)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                    Button(action: commit) {
+                        Text(prompt.button)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color(white: 0.1))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(Color.cratesAmber.opacity(trimmed.isEmpty ? 0.45 : 1)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(trimmed.isEmpty)
+                }
+            }
+            .padding(18)
+            .frame(width: 280)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThickMaterial))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.14), lineWidth: 1))
+            .shadow(color: .black.opacity(0.5), radius: 18, y: 8)
+        }
+        .onAppear { DispatchQueue.main.async { focused = true } }
+        .onExitCommand(perform: onCancel)
+    }
+
+    private func commit() {
+        guard !trimmed.isEmpty else { return }
+        onCommit(trimmed)
     }
 }
 
@@ -51,7 +139,6 @@ struct RecordListView: View {
     @ObservedObject var library: Library
     @ObservedObject var downloads: DownloadManager
     var onBack: () -> Void
-    var onOpen: (CrateFilter) -> Void
     var onRetry: (Record) -> Void
     var onUpdateAndRetry: (Record) -> Void
     var onRemove: (Record) -> Void
@@ -59,6 +146,7 @@ struct RecordListView: View {
 
     @AppStorage("recordSort") private var sort = "date"          // date | bpm | key
     @AppStorage("recordSubfilter") private var subfilter = "all" // all | sorted | unsorted (All crate only)
+    @State private var hoverBack = false
 
     private var title: String {
         switch filter {
@@ -72,9 +160,6 @@ struct RecordListView: View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.4)
-            if !library.crates.isEmpty {
-                CrateStrip(library: library, current: filter, onOpen: onOpen)
-            }
             toolbar
             Divider().opacity(0.25)
             if records.isEmpty && !(filter == .all && downloads.current != nil) {
@@ -115,66 +200,61 @@ struct RecordListView: View {
         }
     }
 
+    /// Breadcrumb: CRATES / <this crate>. The first word is the way back.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                // A labelled way back, clearly a control and not part of the title.
-                Button(action: onBack) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
-                        Text("Crates").font(.system(size: 10, weight: .semibold))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.primary.opacity(0.08)))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(records.count) \(records.count == 1 ? "record" : "records")")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 7) {
+            Button(action: onBack) {
+                Text("CRATES")
+                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                    .kerning(2.5)
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(hoverBack ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+            .onHover { hoverBack = $0 }
+            .help("Back to your crates")
+            Text("/")
+                .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                .foregroundStyle(.tertiary)
             Text(title.uppercased())
                 .font(.system(size: 12, weight: .heavy, design: .monospaced))
                 .kerning(2.5)
                 .lineLimit(1)
+            Spacer()
+            Text("\(records.count) \(records.count == 1 ? "record" : "records")")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.vertical, 10)
     }
 
+    /// Chips, not menus: All · Sorted · Unsorted on the left (All crate only),
+    /// DATE · BPM · KEY on the right.
     private var toolbar: some View {
         HStack(spacing: 6) {
             if filter == .all {
                 ForEach([("all", "All"), ("sorted", "Sorted"), ("unsorted", "Unsorted")], id: \.0) { value, label in
-                    Button(label) { subfilter = value }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                        .kerning(1.2)
-                        .foregroundStyle(subfilter == value ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                    chip(label, on: subfilter == value) { subfilter = value }
                 }
             }
             Spacer()
-            Menu {
-                ForEach([("date", "Date"), ("bpm", "BPM"), ("key", "Key")], id: \.0) { value, label in
-                    Button { sort = value } label: {
-                        if sort == value { Label(label, systemImage: "checkmark") } else { Text(label) }
-                    }
-                }
-            } label: {
-                Text("\(sort == "bpm" ? "BPM" : sort == "key" ? "KEY" : "DATE") ▾")
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    .kerning(1.2)
-                    .foregroundStyle(.secondary)
+            ForEach([("date", "DATE"), ("bpm", "BPM"), ("key", "KEY")], id: \.0) { value, label in
+                chip(label, on: sort == value) { sort = value }
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
+    }
+
+    private func chip(_ label: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(label, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+            .kerning(1.2)
+            .foregroundStyle(on ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.primary.opacity(on ? 0.12 : 0)))
     }
 
     private var emptyState: some View {
@@ -232,65 +312,5 @@ struct RecordListView: View {
             if out.last?.0 == label { out[out.count - 1].1.append(record) } else { out.append((label, [record])) }
         }
         return out
-    }
-}
-
-/// Every crate as a chip. Tap to go there; drop a record on it to file it.
-struct CrateStrip: View {
-    @ObservedObject var library: Library
-    var current: CrateFilter
-    var onOpen: (CrateFilter) -> Void
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(library.crates) { crate in
-                    CrateChip(name: crate.name, isCurrent: current == .crate(crate.id),
-                              onTap: { onOpen(.crate(crate.id)) },
-                              onDropRecord: { library.add($0, to: crate.id) },
-                              resolve: { url in library.records.first { $0.filePath == url.path } })
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-        }
-    }
-}
-
-struct CrateChip: View {
-    let name: String
-    let isCurrent: Bool
-    let onTap: () -> Void
-    let onDropRecord: (Record) -> Void
-    let resolve: (URL) -> Record?
-    @State private var targeted = false
-
-    var body: some View {
-        Button(action: onTap) {
-            Text(name)
-                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                .kerning(0.8)
-                .lineLimit(1)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(targeted ? Color.cratesAmber.opacity(0.35)
-                                           : isCurrent ? Color.primary.opacity(0.18) : Color.primary.opacity(0.06)))
-                .overlay(Capsule().strokeBorder(targeted ? Color.cratesAmber : .clear, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(isCurrent || targeted ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-        .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
-            guard let provider = providers.first else { return false }
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
-                guard let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
-                DispatchQueue.main.async {
-                    if let record = resolve(url) {
-                        onDropRecord(record)
-                        Log.d("dropped \(record.numberLabel) onto crate \(name)")
-                    }
-                }
-            }
-            return true
-        }
     }
 }
