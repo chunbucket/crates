@@ -55,6 +55,7 @@ struct RecordRow: View {
     @State private var fileMissing = false
 
     private func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    private func openSource() { if let url = URL(string: record.url) { NSWorkspace.shared.open(url) } }
     /// Failed, or filed but the FLAC has gone: either way the fix is a re-record.
     private var needsRecut: Bool { record.isFailed || fileMissing }
     private var looksLike403: Bool { record.error?.contains("403") == true }
@@ -104,6 +105,7 @@ struct RecordRow: View {
                         RowButton(symbol: "play.fill", help: "Play") { player.play(record) }
                         RowButton(symbol: "magnifyingglass", help: "Reveal FLAC in Finder") { reveal(url) }
                     }
+                    RowButton(symbol: "link", help: "Open the original link") { openSource() }
                     RowButton(symbol: "trash", help: "Remove record…") { onRemove(record) }
                 } else if !needsRecut {
                     Text(record.bpm.map { String(format: "%.1f", $0) } ?? "—")
@@ -115,7 +117,7 @@ struct RecordRow: View {
                         .frame(width: 34)
                 }
             }
-            .frame(width: 84, alignment: .trailing)
+            .frame(width: 96, alignment: .trailing)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -146,6 +148,7 @@ struct RecordRow: View {
             if case .crate(let id) = filter {
                 Button("Remove from This Crate") { library.remove(record, from: id) }
             }
+            Button("Open Link") { openSource() }
             Button("Copy Link") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(record.url, forType: .string)
