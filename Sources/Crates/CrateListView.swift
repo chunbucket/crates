@@ -4,9 +4,20 @@ import SwiftUI
 /// All and Unsorted first, then the user's crates, newest first.
 struct CrateListView: View {
     @ObservedObject var library: Library
+    @ObservedObject var downloads: DownloadManager
     var onOpen: (CrateFilter) -> Void
     var onNew: () -> Void
     var onRename: (Crate) -> Void
+    var onRetry: (Record) -> Void
+    var onUpdateAndRetry: (Record) -> Void
+    var onRemove: (Record) -> Void
+    var onNewCrate: (Record?) -> Void
+
+    /// What's fresh: today's records, newest first, minus the one in flight.
+    private var fresh: [Record] {
+        let inFlight = downloads.inFlight?.id
+        return Array(library.records.filter { Calendar.current.isDateInToday($0.date) && $0.id != inFlight }.prefix(5))
+    }
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
 
@@ -32,6 +43,27 @@ struct CrateListView: View {
             Divider().opacity(0.4)
 
             ScrollView {
+                // Newly recorded, above the crates: in flight, queued, then today's.
+                if downloads.inFlight != nil || !downloads.queued.isEmpty || !fresh.isEmpty {
+                    LazyVStack(spacing: 0) {
+                        DateHeader(label: "NEW")
+                        if let active = downloads.inFlight {
+                            ActiveRow(record: active)
+                            Divider().opacity(0.25)
+                        }
+                        ForEach(downloads.queued) { item in
+                            QueuedRow(url: item.url)
+                            Divider().opacity(0.25)
+                        }
+                        ForEach(fresh) { record in
+                            RecordRow(record: record, library: library, filter: .all,
+                                      onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
+                                      onRemove: onRemove, onNewCrate: onNewCrate)
+                            Divider().opacity(0.25)
+                        }
+                    }
+                    .padding(.bottom, 6)
+                }
                 LazyVGrid(columns: columns, spacing: 16) {
                     CrateTile(name: "All", count: library.records.count,
                               sleeves: Array(library.records.prefix(3))) { onOpen(.all) }

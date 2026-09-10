@@ -30,8 +30,10 @@ struct CollectionView: View {
                     .transition(.move(edge: .trailing))
                     .zIndex(1)
             } else {
-                CrateListView(library: library, onOpen: { go($0) },
-                              onNew: { onNewCrate(nil) }, onRename: onRenameCrate)
+                CrateListView(library: library, downloads: downloads, onOpen: { go($0) },
+                              onNew: { onNewCrate(nil) }, onRename: onRenameCrate,
+                              onRetry: onRetry, onUpdateAndRetry: onUpdateAndRetry,
+                              onRemove: onRemove, onNewCrate: onNewCrate)
                     .transition(.move(edge: .leading))
             }
             if let p = prompt.current {
