@@ -73,9 +73,6 @@ struct CrateBack: View {
             let t = MilkCrate.fit(size)
             let (w, d, h, r) = (MilkCrate.w, MilkCrate.d, MilkCrate.h, MilkCrate.rim)
             let P = MilkCrate.project
-            // a soft shadow on the ground
-            let base = MilkCrate.poly([P(-0.08, -0.08, -0.02), P(w + 0.1, -0.08, -0.02), P(w + 0.1, d + 0.1, -0.02), P(-0.08, d + 0.1, -0.02)], t)
-            ctx.fill(base, with: .color(.black.opacity(0.35)))
             // opening floor + inner walls, one darker parallelogram
             ctx.fill(MilkCrate.poly([P(r, r, h), P(w - r, r, h), P(w - r, d - r, h), P(r, d - r, h)], t),
                      with: .color(palette.inside))
